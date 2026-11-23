@@ -58,16 +58,10 @@ h2{font-size:14px;margin:0;font-weight:700}
 .pt{font-size:13px;font-weight:600}
 .pt small{color:var(--dim);font-weight:400}
 #errNow{color:var(--out);font-size:13px;min-height:1em;margin-top:6px}
-.mx{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:8px}
-@media(max-width:700px){.mx{grid-template-columns:minmax(0,1fr)}}
-.mt{width:100%;border-collapse:separate;border-spacing:3px;font-size:12px;table-layout:fixed}
-.mt th{color:var(--dim);font-weight:600;padding:2px 0;text-align:center}
-.mt th:first-child{width:2.4em;text-align:right;padding-right:4px}
-.mt td{text-align:center;padding:7px 2px;border-radius:6px;background:#0d131b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.mt td.dg{outline:1px solid #2f4a63}
-.mt tr.y td{background:none;color:var(--dim);padding-top:2px}
+.nm{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:8px}
+.nt{background:#0d131b;border-radius:10px;padding:8px 10px}
+.nv{font-size:clamp(18px,5.5vw,26px);font-weight:800;margin-top:2px;white-space:nowrap}
 .mcap{font-size:12px;color:var(--dim);margin-top:4px}
-.mh{font-size:13px;font-weight:700;margin-bottom:2px}
 .bar{position:fixed;left:0;right:0;bottom:0;background:rgba(10,13,18,.94);backdrop-filter:blur(8px);border-top:1px solid var(--line);
   padding:10px 12px calc(10px + env(safe-area-inset-bottom))}
 .bar .in{max-width:980px;margin:0 auto}
@@ -118,12 +112,12 @@ code{color:var(--ink)}
 
   <section class="card">
     <div class="ch"><h2>필터 내부</h2><span class="mcap" id="kAge"></span></div>
-    <div class="mx">
-      <div><div class="mh">공분산 P</div><table class="mt" id="tP"></table>
-        <div class="mcap">대각선(테두리) = 표준편차 σ, 나머지 = 상관계수 ρ (<span style="color:var(--kf)">파랑 +</span> / <span style="color:var(--err)">빨강 −</span>)</div></div>
-      <div><div class="mh">칼만 게인 K <small style="color:var(--dim);font-weight:400">(마지막 GPS 보정)</small></div><table class="mt" id="tK"></table>
-        <div class="mcap">행 = 상태, 열 = GPS 측정. 값 = 잔차 1단위가 상태를 얼마나 움직이는지 (단위: 상태/측정). 맨 아래 = 잔차 y</div></div>
+    <div class="nm">
+      <div class="nt"><div class="k">공분산 ‖P‖<sub>F</sub></div><div class="nv" id="nP">–</div><div class="mcap">작을수록 확신 · GPS 끊기면 커짐</div></div>
+      <div class="nt"><div class="k">칼만 게인 ‖K̃‖<sub>F</sub></div><div class="nv" id="nK">–</div><div class="mcap">클수록 GPS를 많이 반영 (무차원)</div></div>
+      <div class="nt"><div class="k">위치 잔차 ‖y<sub>E,N</sub>‖</div><div class="nv" id="nY">–</div><div class="mcap">예측과 GPS 위치 차이</div></div>
     </div>
+    <div class="mcap" style="margin-top:6px">‖·‖<sub>F</sub> = 프로베니우스 노름(원소 제곱합의 제곱근). ‖P‖는 SI 단위 기준이라 주로 위치 분산(m²)이 좌우하고, K̃는 원소마다 "잔차 1σ가 상태를 보정 전 σ의 몇 배만큼 움직이는지"로 단위를 없앤 값이에요.</div>
   </section>
 
   <section class="card">
@@ -140,10 +134,8 @@ code{color:var(--ink)}
         <div class="lg"><span><i class="sw" style="background:var(--imu)"></i>IMU (정렬 후)</span><span><i class="dt" style="background:var(--gps)"></i>GPS 속력 변화</span></div></div>
       <div class="pl"><div class="pt">IMU 회전 속도 <small>°/s (시계방향 +)</small></div><div class="fig"><canvas id="cvW"></canvas></div>
         <div class="lg"><span><i class="sw" style="background:var(--imu)"></i>자이로 (치우침 보정 후)</span><span><i class="dt" style="background:var(--gps)"></i>GPS 방향 변화</span></div></div>
-      <div class="pl"><div class="pt">칼만 게인 <small>대각 성분, 0 = 예측만 믿음 · 1 = GPS만 믿음</small></div><div class="fig"><canvas id="cvK"></canvas></div>
-        <div class="lg"><span><i class="sw" style="background:var(--kf)"></i>K(E←E) 위치</span><span><i class="sw" style="background:var(--gps)"></i>K(v←v) 속력</span><span><i class="sw" style="background:var(--imu)"></i>K(ψ←ψ) 방향</span></div></div>
-      <div class="pl"><div class="pt">상태 불확실도 σ <small>위치 m · 속력 km/h · 방향 °</small></div><div class="fig"><canvas id="cvS"></canvas></div>
-        <div class="lg"><span><i class="sw" style="background:var(--kf)"></i>σ 위치</span><span><i class="sw" style="background:var(--gps)"></i>σ 속력</span><span><i class="sw" style="background:var(--imu)"></i>σ 방향</span></div></div>
+      <div class="pl"><div class="pt">칼만 게인 노름 <small>‖K̃‖<sub>F</sub> 무차원 (GPS 보정마다)</small></div><div class="fig"><canvas id="cvK"></canvas></div></div>
+      <div class="pl"><div class="pt">공분산 노름 <small>‖P‖<sub>F</sub>, 로그 눈금</small></div><div class="fig"><canvas id="cvS"></canvas></div></div>
     </div>
   </section>
 

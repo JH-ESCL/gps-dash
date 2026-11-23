@@ -95,7 +95,9 @@ export class EKF {
     const S = M.add(M.mul(M.mul(H, this.P), M.T(H)), M.diag(Rd));
     const K = M.mul(M.mul(this.P, M.T(H)), M.inv(S));
     this.x = this.x.map((v, i) => v + dot(K[i], y));
-    this.last = { t: this.t, K, y, names, S };          // 시각화용: 마지막 보정의 게인·잔차
+    // 시각화용: 무차원 게인 K̃ij = Kij·σ(잔차j)/σ(상태i, 보정 전) — 단위가 섞인 K를 비교 가능하게
+    const Kn = K.map((r, i) => r.map((v, j) => v * Math.sqrt(S[j][j]) / Math.sqrt(Math.max(1e-12, this.P[i][i]))));
+    this.last = { t: this.t, K, Kn, y, names, S };
     this.x[2] = Math.max(0, this.x[2]);
     this.x[3] = (this.x[3] % TAU + TAU) % TAU;
     const P = M.mul(M.sub(M.I(5), M.mul(K, H)), this.P);
