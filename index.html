@@ -54,10 +54,20 @@ h2{font-size:14px;margin:0;font-weight:700}
 .pt{font-size:13px;font-weight:600}
 .pt small{color:var(--dim);font-weight:400}
 #errNow{color:var(--out);font-size:13px;min-height:1em;margin-top:6px}
+.mx{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:8px}
+@media(max-width:700px){.mx{grid-template-columns:minmax(0,1fr)}}
+.mt{width:100%;border-collapse:separate;border-spacing:3px;font-size:12px;table-layout:fixed}
+.mt th{color:var(--dim);font-weight:600;padding:2px 0;text-align:center}
+.mt th:first-child{width:2.4em;text-align:right;padding-right:4px}
+.mt td{text-align:center;padding:7px 2px;border-radius:6px;background:#0d131b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mt td.dg{outline:1px solid #2f4a63}
+.mt tr.y td{background:none;color:var(--dim);padding-top:2px}
+.mcap{font-size:12px;color:var(--dim);margin-top:4px}
+.mh{font-size:13px;font-weight:700;margin-bottom:2px}
 .bar{position:fixed;left:0;right:0;bottom:0;background:rgba(10,13,18,.94);backdrop-filter:blur(8px);border-top:1px solid var(--line);
   padding:10px 12px calc(10px + env(safe-area-inset-bottom))}
 .bar .in{max-width:980px;margin:0 auto}
-.btns{display:grid;grid-template-columns:1.2fr 1.4fr 1.2fr .8fr;gap:8px}
+.btns{display:grid;grid-template-columns:1.1fr 1.3fr 1.1fr 1fr .8fr;gap:8px}
 .btns button{min-height:46px;border-radius:11px;border:1px solid var(--line);background:var(--panel);color:var(--ink);font:inherit;font-size:14px;font-weight:600}
 #go{background:var(--gps);color:#03140c;border:0}
 #go.stop{background:var(--err);color:#1a0505}
@@ -67,7 +77,8 @@ button:focus-visible{outline:2px solid var(--kf);outline-offset:2px}
 details{margin-top:12px;font-size:13px;color:var(--dim)}
 details summary{color:var(--ink);cursor:pointer;min-height:30px}
 code{color:var(--ink)}
-@media(max-width:420px){.ro{gap:6px}.r{padding:8px}#cmp{width:26px;height:26px}.btns{grid-template-columns:1fr 1fr}.btns button{min-height:42px}}
+@media(max-width:520px){.ro{gap:6px}.r{padding:8px}#cmp{width:26px;height:26px}.btns{grid-template-columns:repeat(6,minmax(0,1fr))}.btns button{min-height:42px;grid-column:span 2}.btns #rst,.btns #csv{grid-column:span 3}}
+#rst{color:var(--err)}
 </style>
 </head>
 <body>
@@ -102,6 +113,16 @@ code{color:var(--ink)}
   </section>
 
   <section class="card">
+    <div class="ch"><h2>필터 내부</h2><span class="mcap" id="kAge"></span></div>
+    <div class="mx">
+      <div><div class="mh">공분산 P</div><table class="mt" id="tP"></table>
+        <div class="mcap">대각선(테두리) = 표준편차 σ, 나머지 = 상관계수 ρ (<span style="color:var(--kf)">파랑 +</span> / <span style="color:var(--err)">빨강 −</span>)</div></div>
+      <div><div class="mh">칼만 게인 K <small style="color:var(--dim);font-weight:400">(마지막 GPS 보정)</small></div><table class="mt" id="tK"></table>
+        <div class="mcap">행 = 상태, 열 = GPS 측정. 값 = 잔차 1단위가 상태를 얼마나 움직이는지 (단위: 상태/측정). 맨 아래 = 잔차 y</div></div>
+    </div>
+  </section>
+
+  <section class="card">
     <div class="ch"><h2>시계열 <small style="color:var(--dim);font-weight:400">주황 배경 = GPS 없이 IMU로 추정한 구간</small></h2>
       <div class="seg" id="win"><button data-w="60">1분</button><button data-w="300" class="on">5분</button><button data-w="0">전체</button></div></div>
     <div class="plots">
@@ -115,6 +136,10 @@ code{color:var(--ink)}
         <div class="lg"><span><i class="sw" style="background:var(--imu)"></i>IMU (정렬 후)</span><span><i class="dt" style="background:var(--gps)"></i>GPS 속력 변화</span></div></div>
       <div class="pl"><div class="pt">IMU 회전 속도 <small>°/s (시계방향 +)</small></div><div class="fig"><canvas id="cvW"></canvas></div>
         <div class="lg"><span><i class="sw" style="background:var(--imu)"></i>자이로 (치우침 보정 후)</span><span><i class="dt" style="background:var(--gps)"></i>GPS 방향 변화</span></div></div>
+      <div class="pl"><div class="pt">칼만 게인 <small>대각 성분, 0 = 예측만 믿음 · 1 = GPS만 믿음</small></div><div class="fig"><canvas id="cvK"></canvas></div>
+        <div class="lg"><span><i class="sw" style="background:var(--kf)"></i>K(E←E) 위치</span><span><i class="sw" style="background:var(--gps)"></i>K(v←v) 속력</span><span><i class="sw" style="background:var(--imu)"></i>K(ψ←ψ) 방향</span></div></div>
+      <div class="pl"><div class="pt">상태 불확실도 σ <small>위치 m · 속력 km/h · 방향 °</small></div><div class="fig"><canvas id="cvS"></canvas></div>
+        <div class="lg"><span><i class="sw" style="background:var(--kf)"></i>σ 위치</span><span><i class="sw" style="background:var(--gps)"></i>σ 속력</span><span><i class="sw" style="background:var(--imu)"></i>σ 방향</span></div></div>
     </div>
   </section>
 
@@ -133,6 +158,7 @@ code{color:var(--ink)}
     <button id="go">시작</button>
     <button id="sim">시뮬레이션</button>
     <button id="blk">GPS 차단</button>
+    <button id="rst">초기화</button>
     <button id="csv">CSV</button>
   </div>
   <div id="msg">시작: 내 폰 GPS·IMU 사용 · 시뮬레이션: 가상 주행으로 필터 확인</div>

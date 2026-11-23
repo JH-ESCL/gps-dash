@@ -14,7 +14,7 @@ let mode = null;           // null | 'real' | 'sim'
 let watchId = null, sim = null, wake = null, blocked = false, follow = true, winSec = 300;
 
 function resetHist() {
-  H = { gps: [], kf: [], err: [], imu: [], gacc: [], gyaw: [] };
+  H = { gps: [], kf: [], err: [], imu: [], gacc: [], gyaw: [], gain: [] };
   ref = null; prevG = null; lastFixT = 0; lastRawT = 0; gpsIv = []; lastKfT = 0; lastImuT = 0;
   kf.x = null; imu.reset();
 }
@@ -35,6 +35,10 @@ function onGps(f) {
   if (!res.ok) { rec.rejected = true; push(H.gps, rec); prevG = null; imu.clearBin(); return; }
   push(H.gps, rec);
   if (res.d != null) push(H.err, { t: f.t, d: res.d, blocked: false });
+  if (!res.init && kf.last) {
+    const L = kf.last, col = n => L.names.indexOf(n);
+    push(H.gain, { t: f.t, kE: L.K[0][col('E')], kv: col('v') >= 0 ? L.K[2][col('v')] : null, kp: col('ψ') >= 0 ? L.K[3][col('ψ')] : null });
+  }
   lastFixT = f.t;
 
   // IMU 정렬 학습: GPS 속력·방향 변화와 IMU 신호를 짝지음
@@ -106,6 +110,10 @@ $('go').onclick = () => (mode === 'real' ? (stopAll(), msg('정지했어요. 기
 $('sim').onclick = () => (mode === 'sim' ? (stopAll(), msg('시뮬레이션을 멈췄어요.')) : startSim());
 $('blk').onclick = () => { if (!mode) return msg('먼저 시작하거나 시뮬레이션을 켜 주세요.'); blocked = !blocked; msg(blocked ? 'GPS 차단: 필터는 IMU로만 추정하고, 실제 GPS는 회색 점(정답)으로만 표시해요.' : 'GPS 차단 해제'); };
 $('csv').onclick = saveCsv;
+$('rst').onclick = () => {
+  resetHist(); blocked = false;
+  msg(mode ? '필터·IMU 정렬·기록을 초기화했어요. 다음 GPS 수신부터 새로 시작해요.' : '필터와 기록을 초기화했어요.');
+};
 $('fFollow').onclick = () => { follow = true; segOn('fFollow', 'fAll'); };
 $('fAll').onclick = () => { follow = false; segOn('fAll', 'fFollow'); };
 for (const b of document.querySelectorAll('#win button')) b.onclick = () => { winSec = +b.dataset.w; document.querySelectorAll('#win button').forEach(x => x.classList.toggle('on', x === b)); };
@@ -191,6 +199,16 @@ function render() {
     { type: 'line', color: COL.out, dash: [5, 4], width: 1.6, pts: H.kf.map(p => [p.t, 2 * p.sig]) },
     { type: 'dots', color: COL.err, pts: H.err.filter(p => !p.blocked).map(p => [p.t, p.d]), hollow: H.err.filter(p => p.blocked).map(p => [p.t, p.d]), hollowColor: COL.err },
   ] });
+  timeChart($('cvK'), { t0, t1, outages, yMin: 0, yMax: 1, series: [
+    { type: 'line', color: COL.kf, pts: H.gain.map(p => [p.t, p.kE]) },
+    { type: 'line', color: COL.gps, width: 1.6, pts: H.gain.filter(p => p.kv != null).map(p => [p.t, p.kv]) },
+    { type: 'line', color: COL.imu, width: 1.6, pts: H.gain.filter(p => p.kp != null).map(p => [p.t, p.kp]) },
+  ] });
+  timeChart($('cvS'), { t0, t1, outages, yMin: 0, series: [
+    { type: 'line', color: COL.kf, pts: H.kf.map(p => [p.t, p.sig]) },
+    { type: 'line', color: COL.gps, width: 1.6, pts: H.kf.map(p => [p.t, p.sv * 3.6]) },
+    { type: 'line', color: COL.imu, width: 1.6, pts: H.kf.filter(p => p.v > 1.5 && p.sp < 90).map(p => [p.t, p.sp]) },
+  ] });
   timeChart($('cvA'), { t0, t1, outages, series: [
     { type: 'line', color: COL.imu, pts: H.imu.filter(p => p.a != null).map(p => [p.t, p.a]) },
     { type: 'dots', color: COL.gps, pts: H.gacc },
@@ -200,10 +218,56 @@ function render() {
     { type: 'dots', color: COL.gps, pts: H.gyaw },
   ] });
 
+  renderMatrices(now);
+
   // 차단 중 실제 오차 요약
   const be = H.err.filter(p => p.blocked && p.t > now - 3000).pop();
   $('errNow').textContent = blocked && be ? `차단 중 실제 오차 ${fmtM(be.d)} · 필터 예상 ±${fmtM(2 * c.sig)}` : '';
 }
+
+/* ---------- 공분산 P · 칼만 게인 K 표 ---------- */
+const ST = ['E', 'N', 'v', 'ψ', 'b<sub>g</sub>'];
+const SCALE = [1, 1, 1, 180 / Math.PI, 180 / Math.PI];            // 상태 표시 단위: m, m, m/s, °, °/s
+const MSCALE = { E: 1, N: 1, v: 1, 'ψ': 180 / Math.PI };          // 측정 표시 단위: m, m, m/s, °
+const UNIT = [' m', ' m', ' m/s', '°', '°/s'], MUNIT = { E: ' m', N: ' m', v: ' m/s', 'ψ': '°' };
+function num(x) {
+  const a = Math.abs(x);
+  return a === 0 ? '0' : a >= 100 ? x.toFixed(0) : a >= 1 ? x.toFixed(2) : a >= 0.01 ? x.toFixed(3) : x.toExponential(1);
+}
+const pos = a => `rgba(76,194,255,${(0.08 + 0.62 * Math.min(1, a)).toFixed(2)})`;
+const neg = a => `rgba(255,107,107,${(0.08 + 0.62 * Math.min(1, a)).toFixed(2)})`;
+let matKey = '';
+function renderMatrices(now) {
+  const key = kf.x ? `${kf.t}|${kf.last ? kf.last.t : 0}` : 'none';
+  if (key === matKey && kf.x) { if (kf.last) $('kAge').textContent = ageText(now); return; }
+  matKey = key;
+  const head = '<tr><th></th>' + ST.map((s, i) => `<th>${s}<br><small style="font-weight:400">${UNIT[i].trim()}</small></th>`).join('') + '</tr>';
+  if (!kf.x) {
+    $('tP').innerHTML = head + ST.map(s => `<tr><th>${s}</th>${ST.map(() => '<td>–</td>').join('')}</tr>`).join('');
+    $('tK').innerHTML = '<tr><th></th><th>E</th><th>N</th><th>v</th><th>ψ</th></tr>' + ST.map(s => `<tr><th>${s}</th><td>–</td><td>–</td><td>–</td><td>–</td></tr>`).join('');
+    $('kAge').textContent = '필터 대기 중'; return;
+  }
+  const P = kf.P, sd = P.map((r, i) => Math.sqrt(Math.max(0, r[i])));
+  $('tP').innerHTML = head + ST.map((s, i) => `<tr><th>${s}</th>${ST.map((_, j) => {
+    if (i === j) return `<td class="dg" title="σ (${UNIT[i].trim()})">${num(sd[i] * SCALE[i])}</td>`;
+    const rho = P[i][j] / (sd[i] * sd[j] || 1);
+    return `<td style="background:${rho >= 0 ? pos(Math.abs(rho)) : neg(Math.abs(rho))}" title="ρ">${rho.toFixed(2)}</td>`;
+  }).join('')}</tr>`).join('');
+  const L = kf.last;
+  if (!L) { $('tK').innerHTML = '<tr><td>아직 보정 없음</td></tr>'; $('kAge').textContent = ''; return; }
+  $('tK').innerHTML = '<tr><th></th>' + L.names.map(n => `<th>${n}</th>`).join('') + '</tr>' +
+    ST.map((s, i) => `<tr><th>${s}</th>${L.names.map((n, j) => {
+      const v = L.K[i][j] * SCALE[i] / MSCALE[n];
+      return `<td style="background:${v >= 0 ? pos(Math.abs(v)) : neg(Math.abs(v))}">${num(v)}</td>`;
+    }).join('')}</tr>`).join('') +
+    `<tr class="y"><th>y</th>${L.names.map((n, j) => `<td>${L.y[j] >= 0 ? '+' : ''}${num(L.y[j] * MSCALE[n])}${MUNIT[n]}</td>`).join('')}</tr>`;
+  $('kAge').textContent = ageText(now);
+}
+function ageText(now) {
+  const s = (now - kf.last.t) / 1000;
+  return s < 3 ? `마지막 GPS 보정 ${s.toFixed(1)}초 전` : `GPS 보정 없음 ${fmtT(s)} · 예측만 진행 중`;
+}
+
 setInterval(render, 250);
 new ResizeObserver(render).observe(document.body);
 

@@ -1,4 +1,4 @@
-const C = 'kf-viz-v1';
+const C = 'kf-viz-v2';
 const CORE = ['./', './index.html', './js/app.js', './js/kalman.js', './js/imu.js', './js/sim.js', './js/viz.js'];
 const EXTRA = ['./manifest.webmanifest', './icon.svg', './icon-192.png', './icon-512.png'];
 

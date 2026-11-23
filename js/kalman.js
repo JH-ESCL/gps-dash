@@ -49,7 +49,7 @@ export class EKF {
   init(f) {
     this.lat0 = f.lat; this.lon0 = f.lon; this.t = f.t; this.rej = 0;
     const moving = f.spd != null && f.spd > 1.5 && f.hdg != null;
-    this.x = [0, 0, f.spd ?? 0, moving ? rad(f.hdg) : 0, 0]; this.gyroOn = false;
+    this.x = [0, 0, f.spd ?? 0, moving ? rad(f.hdg) : 0, 0]; this.gyroOn = false; this.last = null;
     this.P = M.diag([f.acc ** 2, f.acc ** 2, f.spd != null ? 1 : 25, moving ? rad(10) ** 2 : 10, rad(0.5) ** 2]);
   }
 
@@ -88,12 +88,13 @@ export class EKF {
     this.t = t;
   }
 
-  _update(z, H, Rd, ai) {
+  _update(z, H, Rd, ai, names) {
     const y = z.map((v, i) => v - dot(H[i], this.x));
     if (ai != null) y[ai] = wrapPi(y[ai]);
     const S = M.add(M.mul(M.mul(H, this.P), M.T(H)), M.diag(Rd));
     const K = M.mul(M.mul(this.P, M.T(H)), M.inv(S));
     this.x = this.x.map((v, i) => v + dot(K[i], y));
+    this.last = { t: this.t, K, y, names, S };          // 시각화용: 마지막 보정의 게인·잔차
     this.x[2] = Math.max(0, this.x[2]);
     this.x[3] = (this.x[3] % TAU + TAU) % TAU;
     const P = M.mul(M.sub(M.I(5), M.mul(K, H)), this.P);
@@ -111,10 +112,10 @@ export class EKF {
     if (d > gate) { this.init(f); return { d, ok: true, init: true }; }
     this.rej = 0;
     const z = [e, n], H = [[1, 0, 0, 0, 0], [0, 1, 0, 0, 0]], Rd = [f.acc ** 2, f.acc ** 2];
-    let ai = null;
-    if (f.spd != null) { z.push(f.spd); H.push([0, 0, 1, 0, 0]); Rd.push(0.5 ** 2); }
-    if (f.hdg != null && (f.spd ?? this.x[2]) > 1.5) { z.push(rad(f.hdg)); H.push([0, 0, 0, 1, 0]); Rd.push(rad(5) ** 2); ai = z.length - 1; }
-    this._update(z, H, Rd, ai);
+    let ai = null; const names = ['E', 'N'];
+    if (f.spd != null) { z.push(f.spd); H.push([0, 0, 1, 0, 0]); Rd.push(0.5 ** 2); names.push('v'); }
+    if (f.hdg != null && (f.spd ?? this.x[2]) > 1.5) { z.push(rad(f.hdg)); H.push([0, 0, 0, 1, 0]); Rd.push(rad(5) ** 2); ai = z.length - 1; names.push('ψ'); }
+    this._update(z, H, Rd, ai, names);
     if (Math.abs(this.x[0]) > 20000 || Math.abs(this.x[1]) > 20000) {   // 기준점 옮기기 (장거리)
       [this.lat0, this.lon0] = this.ll(); this.x[0] = this.x[1] = 0;
     }
