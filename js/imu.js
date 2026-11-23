@@ -69,6 +69,8 @@ export class Imu {
 
   // 자이로와 GPS 방향 변화의 상관이 뚜렷할 때만 부호 확정
   corr() { return this.Srr > 1e-4 && this.Spp > 1e-4 ? this.Srp / Math.sqrt(this.Srr * this.Spp) : 0; }
+  // 정지 판정 보조: 수평 가속과 회전이 거의 없음
+  still() { return this.fresh() && Math.hypot(...this.hLP) < 0.35 && Math.abs(this.rLP) < 0.03; }
   sign() { const c = this.corr(); return Math.abs(c) > 0.6 ? Math.sign(c) : 0; }
   fresh() { return this.on && Date.now() - this.last < 2000; }
   ready() { return this.nA >= NEED_A && this.nW >= NEED_W; }

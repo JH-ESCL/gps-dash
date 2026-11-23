@@ -76,7 +76,8 @@ export class EKF {
     ];
     // 공정잡음: IMU가 정렬되면 작게(IMU를 믿음), 아니면 크게(속도·방향 일정 가정)
     const qa = u.okA ? 0.3 : 1.0, qw = u.okW ? 0.006 : 0.15;
-    const Q = M.diag([0.02 * h, 0.02 * h, qa * qa * h, qw * qw * h, 1e-7 * h]);
+    // 위치 잡음 1 m²/s: GPS 오차는 시간상관(천천히 흐름)이 있어 백색잡음 가정만으로는 σ가 과소평가됨
+    const Q = M.diag([1.0 * h, 1.0 * h, qa * qa * h, qw * qw * h, 1e-7 * h]);
     this.P = M.add(M.mul(M.mul(F, this.P), M.T(F)), Q);
   }
 
@@ -101,8 +102,9 @@ export class EKF {
     this.P = P.map((r, i) => r.map((v, j) => (v + P[j][i]) / 2));
   }
 
-  // GPS 보정. 반환: { d: 예측 위치와 GPS 차이(m), ok: 반영 여부 }
-  update(f, u) {
+  // GPS 보정. still=정지 판정이면 속력 0을 측정으로 넣고(ZUPT) 위치는 덜 믿어 GPS 흐름을 덜 따라감
+  // 반환: { d: 예측 위치와 GPS 차이(m), ok: 반영 여부 }
+  update(f, u, still = false) {
     if (!this.x || this.sigma() > 20000) { this.init(f); return { d: null, ok: true, init: true }; }
     this.predict(f.t, u);
     const [e, n] = this.toEN(f.lat, f.lon);
@@ -111,9 +113,11 @@ export class EKF {
     if (d > gate && this.rej < 3) { this.rej++; return { d, ok: false }; }
     if (d > gate) { this.init(f); return { d, ok: true, init: true }; }
     this.rej = 0;
-    const z = [e, n], H = [[1, 0, 0, 0, 0], [0, 1, 0, 0, 0]], Rd = [f.acc ** 2, f.acc ** 2];
+    const rp = still ? (2 * f.acc) ** 2 : f.acc ** 2;
+    const z = [e, n], H = [[1, 0, 0, 0, 0], [0, 1, 0, 0, 0]], Rd = [rp, rp];
     let ai = null; const names = ['E', 'N'];
-    if (f.spd != null) { z.push(f.spd); H.push([0, 0, 1, 0, 0]); Rd.push(0.5 ** 2); names.push('v'); }
+    if (still) { z.push(0); H.push([0, 0, 1, 0, 0]); Rd.push(0.05 ** 2); names.push('v'); }
+    else if (f.spd != null) { z.push(f.spd); H.push([0, 0, 1, 0, 0]); Rd.push(0.5 ** 2); names.push('v'); }
     if (f.hdg != null && (f.spd ?? this.x[2]) > 1.5) { z.push(rad(f.hdg)); H.push([0, 0, 0, 1, 0]); Rd.push(rad(5) ** 2); ai = z.length - 1; names.push('ψ'); }
     this._update(z, H, Rd, ai, names);
     if (Math.abs(this.x[0]) > 20000 || Math.abs(this.x[1]) > 20000) {   // 기준점 옮기기 (장거리)

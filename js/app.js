@@ -31,7 +31,10 @@ function onGps(f) {
     if (kf.x) { kf.predict(f.t, imu.input()); const [la, lo] = kf.ll(); push(H.err, { t: f.t, d: hav(la, lo, f.lat, f.lon), blocked: true }); }
     push(H.gps, rec); prevG = null; imu.clearBin(); return;
   }
-  const res = kf.update(f, imu.input());
+  // 정지 판정: GPS 속력≈0 이고 IMU도 조용함(IMU 없으면 GPS만으로)
+  const still = f.spd != null && f.spd < 0.3 && (!imu.fresh() || imu.still());
+  rec.still = still;
+  const res = kf.update(f, imu.input(), still);
   if (!res.ok) { rec.rejected = true; push(H.gps, rec); prevG = null; imu.clearBin(); return; }
   push(H.gps, rec);
   if (res.d != null) push(H.err, { t: f.t, d: res.d, blocked: false });
@@ -69,7 +72,8 @@ setInterval(() => {
   }
   if (now - lastImuT >= 200 && imu.fresh()) {
     lastImuT = now;
-    push(H.imu, { t: now, a: u.okA ? u.a : null, w: u.okW ? deg(u.s * u.r - kf.x[4]) : null });
+    push(H.imu, { t: now, a: u.okA ? u.a : null, w: u.okW ? deg(u.s * u.r - kf.x[4]) : null,
+      h: Math.hypot(...imu.hLP), r: deg(imu.rLP), hz: imu.hz, nA: imu.nA, nW: imu.nW, s: imu.sign(), bg: deg(kf.x[4]) });
   }
 }, 100);
 
@@ -122,10 +126,11 @@ function msg(t) { $('msg').textContent = t; }
 
 function saveCsv() {
   if (!H.gps.length) return msg('저장할 기록이 없어요.');
-  const rows = ['type,t_ms,lat,lon,speed_mps,heading_deg,acc_or_sigma_m,flag'];
-  H.gps.forEach(p => rows.push(['gps', p.t, p.lat, p.lon, p.spd ?? '', p.hdg ?? '', p.acc, p.blocked ? 'blocked' : p.rejected ? 'rejected' : ''].join(',')));
+  const rows = ['type,t_ms,lat,lon,speed_mps,heading_deg,acc_or_sigma_m,flag,imu_a_est_mps2,imu_yaw_est_dps,imu_h_raw_mps2,imu_yaw_raw_dps,imu_hz,align_a,align_w,yaw_sign,gyro_bias_dps'];
+  H.gps.forEach(p => rows.push(['gps', p.t, p.lat, p.lon, p.spd ?? '', p.hdg ?? '', p.acc, p.blocked ? 'blocked' : p.rejected ? 'rejected' : p.still ? 'still' : ''].join(',')));
   H.kf.forEach(p => rows.push(['kf', p.t, p.lat.toFixed(7), p.lon.toFixed(7), p.v.toFixed(3), p.psi.toFixed(2), p.sig.toFixed(2), p.out ? 'imu_only' : ''].join(',')));
-  H.imu.forEach(p => rows.push(['imu', p.t, '', '', p.a ?? '', p.w ?? '', '', 'a_mps2,yaw_dps'].join(',')));
+  H.imu.forEach(p => rows.push(['imu', p.t, '', '', '', '', '', '', p.a == null ? '' : p.a.toFixed(3), p.w == null ? '' : p.w.toFixed(3),
+    p.h.toFixed(3), p.r.toFixed(3), p.hz, p.nA, p.nW, p.s, p.bg.toFixed(4)].join(',')));
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([rows.join('\n')], { type: 'text/csv' }));
   a.download = `kf-log-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}.csv`;
