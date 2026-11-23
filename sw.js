@@ -1,11 +1,11 @@
-const C = 'gps-dash-v8';
-const CORE = ['./', './index.html'];
+const C = 'kf-viz-v1';
+const CORE = ['./', './index.html', './js/app.js', './js/kalman.js', './js/imu.js', './js/sim.js', './js/viz.js'];
 const EXTRA = ['./manifest.webmanifest', './icon.svg', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(C).then(async c => {
     await c.addAll(CORE);
-    await Promise.all(EXTRA.map(u => c.add(u).catch(() => {})));  // 아이콘이 없어도 설치는 성공
+    await Promise.all(EXTRA.map(u => c.add(u).catch(() => {})));
   }));
   self.skipWaiting();
 });
@@ -15,10 +15,13 @@ self.addEventListener('activate', e => {
   self.clients.claim();
 });
 
-// 캐시 우선: 오프라인에서도 앱이 열리도록
+// 네트워크 우선(최신 버전), 실패하면 캐시 → 오프라인에서도 열림
 self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET') return;
   e.respondWith(
-    caches.match(e.request, { ignoreSearch: true }).then(r => r || fetch(e.request).catch(() => caches.match('./index.html')))
+    fetch(e.request).then(r => {
+      if (r.ok && new URL(e.request.url).origin === location.origin) { const cp = r.clone(); caches.open(C).then(c => c.put(e.request, cp)); }
+      return r;
+    }).catch(() => caches.match(e.request, { ignoreSearch: true }).then(r => r || caches.match('./index.html')))
   );
 });

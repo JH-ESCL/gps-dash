@@ -1,6 +1,6 @@
 {
-  "name": "오프라인 GPS 계기판",
-  "short_name": "GPS 계기판",
+  "name": "GPS·IMU 칼만 필터",
+  "short_name": "GPS·IMU KF",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

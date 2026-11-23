@@ -6,576 +6,138 @@
 <meta name="theme-color" content="#0a0d12">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="GPS 계기판">
+<meta name="apple-mobile-web-app-title" content="GPS·IMU KF">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icon-192.png">
-<title>오프라인 GPS 계기판</title>
+<title>GPS·IMU 칼만 필터</title>
 <style>
-:root{--bg:#0a0d12;--panel:#121821;--line:#1f2a36;--ink:#e8eef5;--dim:#8a98a8;--acc:#4cc2ff;--ok:#3ddc97;--warn:#ffb84d;--bad:#ff5d5d;color-scheme:dark}
+:root{--bg:#0a0d12;--panel:#11171f;--line:#1c2632;--ink:#e8eef5;--dim:#8796a8;--kf:#4cc2ff;--gps:#3ddc97;--out:#ffb84d;--err:#ff6b6b;--imu:#c792ea;color-scheme:dark}
 *{box-sizing:border-box;min-width:0}
 html,body{margin:0;background:var(--bg);color:var(--ink)}
-body{font:16px/1.45 system-ui,-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;font-variant-numeric:tabular-nums;
-  padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);overflow-x:clip}
-.wrap{max-width:760px;margin:0 auto;padding:12px 14px 40px}
-.bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-.st{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--dim);flex:1}
-.dot{width:10px;height:10px;border-radius:50%;background:var(--dim);flex:none}
-.dot.ok{background:var(--ok);box-shadow:0 0 8px var(--ok)}.dot.warn{background:var(--warn)}.dot.bad{background:var(--bad)}
-.seg{display:flex;border:1px solid var(--line);border-radius:10px;overflow:hidden}
-.seg button{border:0;background:none;color:var(--dim);padding:0 14px;min-height:40px;font:inherit;font-size:14px}
-.seg button.on{background:var(--acc);color:#04121c;font-weight:700}
-button.main{min-height:44px;padding:0 18px;border-radius:10px;border:0;font:inherit;font-weight:700;background:var(--ok);color:#04130c}
-button.main.stop{background:var(--bad);color:#1a0505}
-button:focus-visible,select:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
-.hero{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:12px;margin-top:12px}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:14px}
-.lbl{font-size:13px;color:var(--dim)}
-.spd{font-size:clamp(64px,19vw,120px);font-weight:800;line-height:1;letter-spacing:-.03em}
-.unit{font-size:18px;color:var(--dim);font-weight:600;margin-left:4px}
-.sub{font-size:14px;color:var(--dim);margin-top:6px}
-.sub b{color:var(--ink);font-weight:600}
-#dial{width:100%;max-width:220px;display:block;margin:0 auto}
-.hd{text-align:center;font-size:22px;font-weight:700;margin-top:2px}
-.hd small{font-size:14px;color:var(--dim);font-weight:500}
-.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:12px}
-.badge{display:inline-block;font-size:12px;font-weight:700;background:var(--warn);color:#1a1000;border-radius:6px;padding:1px 6px;margin-left:4px;vertical-align:1px}
-.imu{margin-top:12px;display:flex;gap:12px;align-items:center;font-size:14px;color:var(--dim)}
-.imu b{color:var(--ink)}
-.bars{display:flex;gap:3px;flex:none}.bars i{width:6px;height:18px;border-radius:2px;background:var(--line)}.bars i.on{background:var(--ok)}
-.res{margin-top:8px;font-size:14px}.res div{display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-top:1px solid var(--line);flex-wrap:wrap}.res b{white-space:nowrap}
-.diag{margin-top:10px;font:12px/1.6 ui-monospace,Menlo,monospace;color:var(--dim);overflow-wrap:anywhere}
-.tile{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:10px 12px}
-.tile .v{font-size:22px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.tile .v small{font-size:13px;color:var(--dim);font-weight:500}.tile .v small.l{display:block;line-height:1.2}
-.next{margin-top:12px}
-.next .row{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap}
-.next .big{font-size:24px;font-weight:700}
-.next .eta{font-size:15px;color:var(--acc);white-space:nowrap}
-select{width:100%;min-height:44px;margin-top:10px;background:#0d131b;color:var(--ink);border:1px solid var(--line);border-radius:10px;font:inherit;font-size:16px;padding:0 10px}
-.fig{position:relative;height:150px;margin-top:8px}
-.fig.tall{height:260px}
+body{font:15px/1.45 system-ui,-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;font-variant-numeric:tabular-nums;overflow-x:clip;
+  padding:env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left)}
+.wrap{max-width:980px;margin:0 auto;padding:12px 12px 110px}
+header{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;justify-content:space-between}
+h1{font-size:18px;margin:0;font-weight:800;letter-spacing:-.01em}
+h1 small{font-size:12px;color:var(--dim);font-weight:500;margin-left:6px}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{display:inline-flex;align-items:center;gap:6px;font-size:12px;padding:4px 9px;border-radius:999px;background:var(--panel);border:1px solid var(--line);color:var(--dim);white-space:nowrap}
+.chip i{width:8px;height:8px;border-radius:50%;background:#4a5666;flex:none}
+.chip.ok i{background:var(--gps);box-shadow:0 0 6px var(--gps)}.chip.warn i{background:var(--out)}.chip.bad i{background:var(--err)}
+.chip.ok,.chip.warn,.chip.bad{color:var(--ink)}
+.ro{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:12px}
+.r{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:10px 12px;position:relative}
+.k{font-size:12px;color:var(--dim)}
+.big{font-size:clamp(30px,9vw,46px);font-weight:800;line-height:1.05;letter-spacing:-.02em}
+.big small{font-size:14px;color:var(--dim);font-weight:600;margin-left:3px}
+.pos{font-size:clamp(14px,4vw,18px);font-weight:700;line-height:1.3;margin-top:4px}
+.sd{font-size:12px;color:var(--dim);margin-top:2px;white-space:nowrap}
+#cmp{position:absolute;right:8px;top:8px;width:34px;height:34px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px;margin-top:12px}
+.ch{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+h2{font-size:14px;margin:0;font-weight:700}
+.seg{display:flex;border:1px solid var(--line);border-radius:9px;overflow:hidden}
+.seg button{border:0;background:none;color:var(--dim);font:inherit;font-size:13px;padding:0 12px;min-height:34px}
+.seg button.on{background:#1d2a38;color:var(--ink);font-weight:700}
+.fig{position:relative;height:130px;margin-top:6px}
+.fig.track{height:min(58vh,420px)}
 .fig canvas{position:absolute;inset:0;width:100%;height:100%}
-h2{font-size:15px;margin:0;color:var(--dim);font-weight:600}
-.btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
-.btns button{flex:1 1 140px;min-height:44px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--ink);font:inherit;font-size:15px}
-.btns button.on{border-color:var(--ok);color:var(--ok)}
-.msg{margin-top:10px;font-size:14px;color:var(--warn);min-height:1em}
-details{margin-top:14px;color:var(--dim);font-size:14px}
-details summary{cursor:pointer;color:var(--ink);min-height:32px}
-details li{margin:4px 0}
-@media(max-width:560px){.hero{grid-template-columns:minmax(0,1fr)}.grid{grid-template-columns:repeat(2,minmax(0,1fr))}#dial{max-width:190px}}
+.lg{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:12px;color:var(--dim);margin-top:6px}
+.lg span{display:inline-flex;align-items:center;gap:5px}
+.sw{display:inline-block;width:14px;height:3px;border-radius:2px}
+.dt{display:inline-block;width:7px;height:7px;border-radius:50%}
+.ho{display:inline-block;width:8px;height:8px;border-radius:50%;border:1.5px solid var(--dim)}
+.plots{display:grid;grid-template-columns:minmax(0,1fr);gap:4px 16px}
+@media(min-width:760px){.plots{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.pl{margin-top:10px}
+.pt{font-size:13px;font-weight:600}
+.pt small{color:var(--dim);font-weight:400}
+#errNow{color:var(--out);font-size:13px;min-height:1em;margin-top:6px}
+.bar{position:fixed;left:0;right:0;bottom:0;background:rgba(10,13,18,.94);backdrop-filter:blur(8px);border-top:1px solid var(--line);
+  padding:10px 12px calc(10px + env(safe-area-inset-bottom))}
+.bar .in{max-width:980px;margin:0 auto}
+.btns{display:grid;grid-template-columns:1.2fr 1.4fr 1.2fr .8fr;gap:8px}
+.btns button{min-height:46px;border-radius:11px;border:1px solid var(--line);background:var(--panel);color:var(--ink);font:inherit;font-size:14px;font-weight:600}
+#go{background:var(--gps);color:#03140c;border:0}
+#go.stop{background:var(--err);color:#1a0505}
+.btns button.on{border-color:var(--out);color:var(--out)}
+#msg{font-size:12px;color:var(--dim);margin-top:6px;min-height:1em}
+button:focus-visible{outline:2px solid var(--kf);outline-offset:2px}
+details{margin-top:12px;font-size:13px;color:var(--dim)}
+details summary{color:var(--ink);cursor:pointer;min-height:30px}
+code{color:var(--ink)}
+@media(max-width:420px){.ro{gap:6px}.r{padding:8px}#cmp{width:26px;height:26px}.btns{grid-template-columns:1fr 1fr}.btns button{min-height:42px}}
 </style>
 </head>
 <body>
 <div class="wrap">
-  <div class="bar">
-    <div class="st"><span class="dot" id="dot"></span><span id="status">대기 중 · 시작을 누르세요</span></div>
-    <div class="seg" role="group" aria-label="모드">
-      <button id="mKtx" class="on">🚄 KTX</button><button id="mAir">✈️ 비행기</button>
+  <header>
+    <h1>GPS·IMU 칼만 필터<small>위치 · 속도 · 방향 추정</small></h1>
+    <div class="chips">
+      <span class="chip" id="cGps"><i></i><span>GPS 꺼짐</span></span>
+      <span class="chip" id="cImu"><i></i><span>IMU 대기</span></span>
+      <span class="chip" id="cKf"><i></i><span>필터 대기</span></span>
     </div>
-    <button class="main" id="go">시작</button>
-  </div>
+  </header>
 
-  <div class="hero">
-    <div class="card">
-      <div class="lbl">현재 속도 <span class="badge" id="estB" hidden>관성 추정</span></div>
-      <div><span class="spd" id="spd">–</span><span class="unit">km/h</span></div>
-      <div class="sub" id="spd2">– kt · – m/s</div>
-      <div class="sub">최고 <b id="vmax">–</b> · 평균 <b id="vavg">–</b> km/h</div>
+  <section class="ro">
+    <div class="r"><div class="k">속도</div><div class="big"><span id="rV">–</span><small>km/h</small></div><div class="sd" id="rVs"></div></div>
+    <div class="r"><div class="k">방향</div><div class="big"><span id="rH">–</span><small>°</small></div><div class="sd" id="rHs"></div>
+      <svg id="cmp" viewBox="0 0 40 40" aria-hidden="true"><circle cx="20" cy="20" r="18" fill="none" stroke="#2a3746" stroke-width="2"/><text x="20" y="9" fill="#ff6b6b" font-size="7" font-weight="700" text-anchor="middle">N</text><path id="needle" d="M20 7 L25 26 L20 23 L15 26Z" fill="#4cc2ff"/></svg></div>
+    <div class="r"><div class="k">위치 (추정)</div><div class="pos" id="rP">–</div><div class="sd" id="rPs"></div></div>
+  </section>
+
+  <section class="card">
+    <div class="ch"><h2>궤적</h2><div class="seg"><button id="fFollow" class="on">따라가기</button><button id="fAll">전체</button></div></div>
+    <div class="fig track"><canvas id="cvTrack"></canvas></div>
+    <div class="lg">
+      <span><i class="dt" style="background:var(--gps)"></i>GPS 측정</span>
+      <span><i class="sw" style="background:var(--kf)"></i>칼만 추정</span>
+      <span><i class="sw" style="background:var(--out)"></i>IMU만으로 추정 (GPS 없음)</span>
+      <span><i class="ho"></i>차단 중 실제 GPS (정답)</span>
+      <span><i class="dt" style="background:rgba(76,194,255,.35)"></i>불확실도 2σ</span>
     </div>
-    <div class="card">
-      <div class="lbl">진행 방향 (위쪽 = 진행 방향)</div>
-      <svg id="dial" viewBox="0 0 200 200" aria-label="나침반">
-        <circle cx="100" cy="100" r="92" fill="#0d131b" stroke="#1f2a36" stroke-width="2"/>
-        <g id="rose"></g>
-        <path d="M100 28 L112 56 L100 50 L88 56 Z" fill="#4cc2ff"/>
-        <line x1="100" y1="4" x2="100" y2="16" stroke="#4cc2ff" stroke-width="3"/>
-      </svg>
-      <div class="hd"><span id="hdg">–</span> <small id="hdgTxt"></small></div>
+    <div id="errNow"></div>
+  </section>
+
+  <section class="card">
+    <div class="ch"><h2>시계열 <small style="color:var(--dim);font-weight:400">주황 배경 = GPS 없이 IMU로 추정한 구간</small></h2>
+      <div class="seg" id="win"><button data-w="60">1분</button><button data-w="300" class="on">5분</button><button data-w="0">전체</button></div></div>
+    <div class="plots">
+      <div class="pl"><div class="pt">속도 <small>km/h</small></div><div class="fig"><canvas id="cvV"></canvas></div>
+        <div class="lg"><span><i class="sw" style="background:var(--kf)"></i>추정</span><span><i class="sw" style="background:rgba(76,194,255,.35);height:8px"></i>±2σ</span><span><i class="dt" style="background:var(--gps)"></i>GPS</span></div></div>
+      <div class="pl"><div class="pt">방향 <small>° (북=0)</small></div><div class="fig"><canvas id="cvH"></canvas></div>
+        <div class="lg"><span><i class="sw" style="background:var(--kf)"></i>추정</span><span><i class="dt" style="background:var(--gps)"></i>GPS</span></div></div>
+      <div class="pl"><div class="pt">위치 오차 <small>m</small></div><div class="fig"><canvas id="cvE"></canvas></div>
+        <div class="lg"><span><i class="sw" style="background:var(--out)"></i>필터가 예상한 오차 (2σ)</span><span><i class="dt" style="background:var(--err)"></i>실제 GPS와 차이</span></div></div>
+      <div class="pl"><div class="pt">IMU 진행방향 가속 <small>m/s²</small></div><div class="fig"><canvas id="cvA"></canvas></div>
+        <div class="lg"><span><i class="sw" style="background:var(--imu)"></i>IMU (정렬 후)</span><span><i class="dt" style="background:var(--gps)"></i>GPS 속력 변화</span></div></div>
+      <div class="pl"><div class="pt">IMU 회전 속도 <small>°/s (시계방향 +)</small></div><div class="fig"><canvas id="cvW"></canvas></div>
+        <div class="lg"><span><i class="sw" style="background:var(--imu)"></i>자이로 (치우침 보정 후)</span><span><i class="dt" style="background:var(--gps)"></i>GPS 방향 변화</span></div></div>
     </div>
-  </div>
-
-  <div class="grid">
-    <div class="tile"><div class="lbl">고도</div><div class="v" id="alt">–</div></div>
-    <div class="tile"><div class="lbl">이동 거리</div><div class="v" id="dist">–</div></div>
-    <div class="tile"><div class="lbl">경과 시간</div><div class="v" id="elap">–</div></div>
-    <div class="tile"><div class="lbl">위도</div><div class="v" id="lat">–</div></div>
-    <div class="tile"><div class="lbl">경도</div><div class="v" id="lon">–</div></div>
-    <div class="tile"><div class="lbl">정확도</div><div class="v" id="acc">–</div></div>
-  </div>
-  <div class="card imu"><div class="bars" id="imuBars"><i></i><i></i><i></i><i></i></div><div id="imuTxt"><b>관성 센서(IMU)</b> · 시작하면 켜져요</div></div>
-
-  <div class="card next">
-    <div class="row"><div><div class="lbl" id="nextLbl">진행 방향 가장 가까운 역</div><div class="big" id="nextName">–</div></div>
-      <div class="eta" id="nextEta"></div></div>
-    <select id="dest" aria-label="목적지"></select>
-    <div class="row" style="margin-top:8px"><div class="lbl">목적지까지 (직선거리)</div><div class="eta" id="destEta">–</div></div>
-  </div>
-
-  <div class="card" style="margin-top:12px"><h2>속도 기록 (최근 15분)</h2><div class="fig"><canvas id="cv"></canvas></div></div>
-  <div class="card" style="margin-top:12px"><h2>이동 경로 (실선 GPS · 점선 관성 추정)</h2><div class="fig tall"><canvas id="tr"></canvas></div></div>
-
-  <div class="btns">
-    <button id="wake">화면 켜두기</button>
-    <button id="gpx">GPX로 저장</button>
-    <button id="reset">기록 초기화</button>
-    <button id="demo">▶ 데모 주행 (GPS 없이)</button>
-  </div>
-  <div class="msg" id="msg"></div>
-
-  <div class="card" style="margin-top:12px">
-    <h2>실기 테스트 (폰에서 직접 검증)</h2>
-    <div class="lbl" style="margin-top:4px">달리는 차·지하철·KTX에서 GPS를 일부러 끊고, 관성 추정이 실제 GPS와 얼마나 어긋나는지 재요. 차단 중에도 GPS는 몰래 받아서 정답으로만 써요.</div>
-    <div class="btns"><button id="blk30">GPS 30초 차단</button><button id="blk60">GPS 60초 차단</button><button id="csv">센서 로그 CSV 저장</button></div>
-    <div class="eta" id="blkLive" style="margin-top:10px;white-space:normal"></div>
-    <div id="blkRes" class="res"></div>
-    <div class="diag" id="diag"></div>
-  </div>
+  </section>
 
   <details>
-    <summary>잘 잡히게 하는 팁</summary>
-    <ul>
-      <li>비행기 모드에서도 GPS 수신은 됩니다. 창가에 폰을 대면 훨씬 잘 잡혀요 (기체·열차 금속이 신호를 막음).</li>
-      <li>오프라인 첫 측위는 1~5분 걸릴 수 있어요. 탑승 전 Wi‑Fi가 될 때 한 번 시작해 두면 빨라집니다.</li>
-      <li>화면이 꺼지면 브라우저가 GPS를 멈춥니다. "화면 켜두기"를 켜고 밝기를 낮추세요.</li>
-      <li>KTX 터널 구간에서는 신호가 끊기는 게 정상이에요. 터널을 나오면 다시 잡힙니다.</li>
-      <li>GPS가 끊기면 칼만필터가 관성 센서(가속도·자이로)로 속도와 방향을 이어서 추정해요. 오차는 시간이 갈수록 커지고, 화면의 ± 값으로 보여줘요.</li>
-      <li>관성 보정은 GPS가 잡힐 때 열차가 가속·감속·커브를 지나며 자동으로 돼요. 폰을 테이블이나 거치대에 고정해 두면 정확하고, 폰을 들어 방향이 바뀌면 다시 보정해요.</li>
-      <li>나침반(자기센서)은 열차·기내 금속 때문에 부정확해서 쓰지 않아요.</li>
-      <li>역·공항 좌표는 대략값이라 수백 m 오차가 있을 수 있어요.</li>
-    </ul>
+    <summary>필터 구조</summary>
+    <p>상태 <code>x = [동, 북, 속력, 방향, 자이로 치우침]</code>을 확장 칼만필터로 추정해요.</p>
+    <p><b>예측</b>: IMU의 진행방향 가속으로 속력을, 자이로 회전으로 방향을 적분하고, 그 속력·방향으로 위치를 이동시켜요.
+    <b>보정</b>: GPS 위치(있으면 속력·방향)로 상태를 바로잡아요. GPS가 없으면 예측만 계속되고 불확실도(2σ)가 커져요.</p>
+    <p><b>IMU 정렬</b>: 폰이 어떤 자세로 놓여 있어도 되도록, GPS가 잡히는 동안 가속·감속·커브를 겪으며 폰 좌표의 "앞 방향"과 회전 부호를 자동으로 학습해요. 폰 자세가 크게 바뀌면 다시 학습해요.</p>
+    <p>폰을 거치대나 테이블에 고정하면 정확해요. 화면이 꺼지면 브라우저가 센서를 멈추므로 화면은 켜 둔 채로 써 주세요.</p>
   </details>
 </div>
 
-<script>
-{
-const PLACES=[
- ['서울','k',37.5547,126.9707],['용산','k',37.5298,126.9648],['수서','k',37.4876,127.1012],['광명','k',37.4163,126.8848],
- ['동탄','k',37.2003,127.0956],['평택지제','k',37.0189,127.0703],['천안아산','k',36.7944,127.1046],['오송','k',36.6203,127.3275],
- ['대전','k',36.3324,127.4342],['서대전','k',36.3226,127.4038],['김천구미','k',36.1136,128.1806],['동대구','k',35.8796,128.6286],
- ['신경주','k',35.7980,129.1388],['울산','k',35.5514,129.1386],['부산','k',35.1151,129.0420],['포항','k',36.0715,129.3434],
- ['공주','k',36.3651,127.0596],['익산','k',35.9405,126.9461],['정읍','k',35.5763,126.8423],['광주송정','k',35.1376,126.7914],
- ['목포','k',34.7914,126.3866],['전주','k',35.8497,127.1616],['순천','k',34.9455,127.5035],['여수엑스포','k',34.7530,127.7480],
- ['청량리','k',37.5804,127.0469],['원주','k',37.3170,127.9201],['평창','k',37.5638,128.4285],['강릉','k',37.7639,128.8996],
- ['진주','k',35.1770,128.1180],['마산','k',35.2333,128.5810],['창원중앙','k',35.2428,128.6966],['안동','k',36.5550,128.7090],
- ['인천공항','a',37.4602,126.4407],['김포공항','a',37.5583,126.7906],['제주공항','a',33.5113,126.4930],['김해공항','a',35.1795,128.9382],
- ['대구공항','a',35.8941,128.6589],['청주공항','a',36.7166,127.4991],['광주공항','a',35.1264,126.8089],['무안공항','a',34.9914,126.3828],
- ['여수공항','a',34.8424,127.6161],['울산공항','a',35.5935,129.3518],['포항경주공항','a',35.9879,129.4204],['양양공항','a',38.0613,128.6692],
- ['도쿄 나리타','a',35.7647,140.3864],['도쿄 하네다','a',35.5494,139.7798],['오사카 간사이','a',34.4347,135.2440],['후쿠오카','a',33.5859,130.4511],
- ['삿포로 신치토세','a',42.7752,141.6923],['오키나와 나하','a',26.2064,127.6465],['타이베이 타오위안','a',25.0777,121.2328],['홍콩','a',22.3080,113.9185],
- ['상하이 푸둥','a',31.1443,121.8083],['베이징 서우두','a',40.0799,116.6031],['방콕 수완나품','a',13.6900,100.7501],['다낭','a',16.0439,108.1994],
- ['하노이 노이바이','a',21.2187,105.8042],['싱가포르 창이','a',1.3644,103.9915],['마닐라','a',14.5086,121.0198],['세부','a',10.3075,123.9794],
- ['괌','a',13.4834,144.7960],['시드니','a',-33.9399,151.1753],['LA','a',33.9416,-118.4085],['뉴욕 JFK','a',40.6413,-73.7781],
- ['파리 CDG','a',49.0097,2.5479],['런던 히스로','a',51.4700,-0.4543],['프랑크푸르트','a',50.0379,8.5622]
-];
-const $=id=>document.getElementById(id);
-const R=6371000,PI=Math.PI,TAU=2*PI,rad=d=>d*PI/180,deg=r=>r*180/PI;
-const hav=(a,b,c,d)=>{const p=rad(c-a),q=rad(d-b);const h=Math.sin(p/2)**2+Math.cos(rad(a))*Math.cos(rad(c))*Math.sin(q/2)**2;return 2*R*Math.asin(Math.sqrt(h))};
-const brg=(a,b,c,d)=>{const y=Math.sin(rad(d-b))*Math.cos(rad(c));const x=Math.cos(rad(a))*Math.sin(rad(c))-Math.sin(rad(a))*Math.cos(rad(c))*Math.cos(rad(d-b));return (deg(Math.atan2(y,x))+360)%360};
-const wrapPi=a=>((a+PI)%TAU+TAU)%TAU-PI;
-const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
-const dot=(a,b)=>a.reduce((s,v,i)=>s+v*b[i],0);
-const DIRS=['북','북북동','북동','동북동','동','동남동','남동','남남동','남','남남서','남서','서남서','서','서북서','북서','북북서'];
-const dirTxt=h=>DIRS[Math.round(h/22.5)%16];
-const fmtDur=s=>{s=Math.max(0,Math.round(s));const h=Math.floor(s/3600),m=Math.floor(s%3600/60),x=s%60;return h?`${h}:${String(m).padStart(2,'0')}:${String(x).padStart(2,'0')}`:`${m}:${String(x).padStart(2,'0')}`};
-const fmtKm=m=>m<1000?`${Math.round(m)} m`:`${(m/1000).toFixed(m<100000?1:0)} km`;
-const save=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}};
-const load=(k,d)=>{try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}};
+<div class="bar"><div class="in">
+  <div class="btns">
+    <button id="go">시작</button>
+    <button id="sim">시뮬레이션</button>
+    <button id="blk">GPS 차단</button>
+    <button id="csv">CSV</button>
+  </div>
+  <div id="msg">시작: 내 폰 GPS·IMU 사용 · 시뮬레이션: 가상 주행으로 필터 확인</div>
+</div></div>
 
-/* ---------- 작은 행렬 연산 ---------- */
-const M={
- mul:(A,B)=>A.map(r=>B[0].map((_,j)=>r.reduce((s,v,k)=>s+v*B[k][j],0))),
- T:A=>A[0].map((_,j)=>A.map(r=>r[j])),
- add:(A,B)=>A.map((r,i)=>r.map((v,j)=>v+B[i][j])),
- sub:(A,B)=>A.map((r,i)=>r.map((v,j)=>v-B[i][j])),
- I:n=>Array.from({length:n},(_,i)=>Array.from({length:n},(_,j)=>+(i===j))),
- diag:d=>d.map((v,i)=>d.map((_,j)=>i===j?v:0)),
- inv:A=>{const n=A.length,a=A.map((r,i)=>[...r,...M.I(n)[i]]);
-  for(let c=0;c<n;c++){let p=c;for(let r=c+1;r<n;r++)if(Math.abs(a[r][c])>Math.abs(a[p][c]))p=r;[a[c],a[p]]=[a[p],a[c]];
-   const d=a[c][c]||1e-12;for(let j=0;j<2*n;j++)a[c][j]/=d;
-   for(let r=0;r<n;r++)if(r!==c){const f=a[r][c];if(f)for(let j=0;j<2*n;j++)a[r][j]-=f*a[c][j]}}
-  return a.map(r=>r.slice(n))}
-};
-
-/* ---------- 확장 칼만필터: x=[동(m), 북(m), 속도(m/s), 방향(rad, 북=0 시계방향)] ---------- */
-const K={x:null,P:null,t:0,lat0:0,lon0:0};
-const toEN=(lat,lon)=>[rad(lon-K.lon0)*R*Math.cos(rad(K.lat0)),rad(lat-K.lat0)*R];
-const toLL=(e,n)=>[K.lat0+deg(n/R),K.lon0+deg(e/(R*Math.cos(rad(K.lat0))))];
-function kfInit(lat,lon,v,psi,acc,t){K.lat0=lat;K.lon0=lon;K.x=[0,0,v??0,psi??0];K.P=M.diag([acc*acc,acc*acc,v==null?100:4,psi==null?10:0.1]);K.t=t}
-function kfStep(h){
- const u=imuInput(),[e,n,v,p]=K.x,s=Math.sin(p),c=Math.cos(p);
- K.x=[e+v*s*h,n+v*c*h,Math.max(0,v+u.a*h),((p+u.w*h)%TAU+TAU)%TAU];
- const F=[[1,0,s*h,v*c*h],[0,1,c*h,-v*s*h],[0,0,1,0],[0,0,0,1]];
- const sa=u.okA?0.3:1.0,sw=u.okW?0.008:0.03;   // IMU 보정되면 공정잡음을 줄여 IMU를 더 믿음
- K.P=M.add(M.mul(M.mul(F,K.P),M.T(F)),M.diag([0.05*h,0.05*h,sa*sa*h,sw*sw*h]));
-}
-function kfPredict(t){if(!K.x)return;let dt=(t-K.t)/1000;if(dt<=0)return;dt=Math.min(dt,5);while(dt>1e-6){const h=Math.min(dt,0.2);kfStep(h);dt-=h}K.t=t}
-function kfUpdate(z,H,Rd,ai){
- const hx=H.map(r=>dot(r,K.x)),y=z.map((v,i)=>v-hx[i]);if(ai!=null)y[ai]=wrapPi(y[ai]);
- const S=M.add(M.mul(M.mul(H,K.P),M.T(H)),M.diag(Rd)),G=M.mul(M.mul(K.P,M.T(H)),M.inv(S));
- K.x=K.x.map((v,i)=>v+dot(G[i],y));K.x[2]=Math.max(0,K.x[2]);K.x[3]=(K.x[3]%TAU+TAU)%TAU;
- K.P=M.mul(M.sub(M.I(4),M.mul(G,H)),K.P);K.P=M.mul(M.add(K.P,M.T(K.P)),[[.5,0,0,0],[0,.5,0,0],[0,0,.5,0],[0,0,0,.5]]);
- return y;
-}
-function kfGps(lat,lon,acc,v,vAcc,psi,psiAcc,t){
- if(!K.x||Math.sqrt(K.P[0][0]+K.P[1][1])>20000){kfInit(lat,lon,v,psi==null?null:rad(psi),acc,t);return null}
- kfPredict(t);
- const [e,n]=toEN(lat,lon),z=[e,n],H=[[1,0,0,0],[0,1,0,0]],Rd=[acc*acc,acc*acc];let ai=null;
- const pre=[K.x[0],K.x[1]];
- if(v!=null){z.push(v);H.push([0,0,1,0]);Rd.push(vAcc*vAcc)}
- if(psi!=null){z.push(rad(psi));H.push([0,0,0,1]);Rd.push(psiAcc*psiAcc);ai=z.length-1}
- kfUpdate(z,H,Rd,ai);
- if(Math.abs(K.x[0])>20000||Math.abs(K.x[1])>20000){const [la,lo]=toLL(K.x[0],K.x[1]);K.lat0=la;K.lon0=lo;K.x[0]=K.x[1]=0}
- return Math.hypot(e-pre[0],n-pre[1]);   // 예측 위치와 실제 GPS의 차이
-}
-const kfSig=()=>K.x?Math.sqrt(K.P[0][0]+K.P[1][1]):Infinity;
-
-/* ---------- IMU: 폰 방향과 무관하게 '진행 방향 가속'과 '수직축 회전'을 학습 ---------- */
-let I;
-function imuReset(keepOn){I={on:keepOn?I.on:false,last:keepOn?I.last:0,g:null,up:null,up0:null,hLP:[0,0,0],rLP:0,
- bin:{h:[0,0,0],r:0,n:0},A:M.diag([1,1,1,1]).map(r=>r.map(v=>v*0.05)),b:[0,0,0,0],f:null,nA:0,Srr:0,Srp:0,nW:0,bw:0,denied:false}}
-imuReset(false);
-function onMotion(aig,lin,rot,dt){
- I.on=true;I.last=Date.now();imuCnt++;
- I.g=I.g?I.g.map((v,i)=>v+Math.min(1,dt/2)*(aig[i]-v)):aig.slice();      // 중력 방향(저역통과)
- const gm=Math.hypot(...I.g)||1,up=I.g.map(v=>v/gm);I.up=up;
- const a=lin||aig.map((v,i)=>v-I.g[i]),ad=dot(a,up),h=a.map((v,i)=>v-ad*up[i]);   // 수평 가속(폰 좌표)
- const r=dot(rot,up);                                                      // 수직축 회전 속도
- const al=Math.min(1,dt/0.6);I.hLP=I.hLP.map((v,i)=>v+al*(h[i]-v));I.rLP+=al*(r-I.rLP);
- I.bin.h=I.bin.h.map((v,i)=>v+h[i]);I.bin.r+=r;I.bin.n++;
- if(I.up0&&dot(up,I.up0)<Math.cos(rad(25))){imuReset(true);imuNote='폰 방향이 바뀌어 다시 보정 중'}
-}
-function imuLearn(aG,wG){
- const n=I.bin.n,bh=I.bin.h,br=I.bin.r;I.bin={h:[0,0,0],r:0,n:0};
- if(n<3||!I.up)return;if(!I.up0)I.up0=I.up.slice();
- const h=[...bh.map(v=>v/n),1],r=br/n,lam=0.997;
- if(aG!=null&&Math.abs(aG)<4){          // 진행방향 가속 = f·[수평가속, 1]  (재귀 최소제곱, 절편=센서 치우침)
-  I.A=I.A.map((row,i)=>row.map((v,j)=>lam*v+h[i]*h[j]));I.b=I.b.map((v,i)=>lam*v+h[i]*aG);
-  if(Math.abs(aG)>0.15)I.nA++;I.f=M.inv(I.A).map(row=>dot(row,I.b));
- }
- if(wG!=null&&Math.abs(wG)<0.5){        // GPS 방향 변화율 = k·(자이로 - 치우침)
-  I.Srr=lam*I.Srr+r*r;I.Srp=lam*I.Srp+r*wG;if(Math.abs(wG)>0.004)I.nW++;
-  const k=imuK();if(k)I.bw+=0.05*((r-wG/k)-I.bw);
- }
-}
-const imuK=()=>{if(I.Srr<1e-5)return 0;const k=I.Srp/I.Srr;return Math.sign(k)*clamp(Math.abs(k),0.8,1.2)};
-function imuInput(){
- if(window.__noImu||!I.on||Date.now()-I.last>2000)return{a:0,w:0,okA:false,okW:false};
- const okA=I.nA>=8&&!!I.f,okW=I.nW>=6&&!!imuK(),lim=mode==='a'?5:2.5;
- return{a:okA?clamp(dot(I.f,[...I.hLP,1]),-lim,lim):0,w:okW?clamp(imuK()*(I.rLP-I.bw),-0.3,0.3):0,okA,okW};
-}
-let imuNote='',motionBound=false;
-function onDM(e){
- if(demo)return;const g=e.accelerationIncludingGravity;if(!g||g.x==null)return;
- const r=e.rotationRate,l=e.acceleration,iv=e.interval||16,dt=(iv>1?iv/1000:iv);
- onMotion([g.x,g.y,g.z],l&&l.x!=null?[l.x,l.y,l.z]:null,r&&r.alpha!=null?[rad(r.beta),rad(r.gamma),rad(r.alpha)]:[0,0,0],clamp(dt,0.005,0.2));
-}
-function motionOn(){
- if(typeof DeviceMotionEvent==='undefined'){I.denied=true;return}
- const bind=()=>{if(!motionBound){addEventListener('devicemotion',onDM);motionBound=true}};
- if(typeof DeviceMotionEvent.requestPermission==='function')DeviceMotionEvent.requestPermission().then(r=>r==='granted'?bind():(I.denied=true)).catch(()=>{I.denied=true});
- else bind();
-}
-
-/* ---------- 앱 상태 ---------- */
-let mode=load('gps.mode','k'),dest=load('gps.dest','');
-let S=load('gps.trip',null)||{pts:[],dist:0,vmax:0,t0:0,moving:0};
-let watch=null,last=null,hd=null,lastHdgPt=null,wake=null,saveT=0,rej=0,win=[],demo=null,demoT=null;
-let gpsPrev=null,lastFixT=0,lastEstT=0,lastTick=0,estDead=false,lastAlt=null;
-
-{let g='';for(let i=0;i<360;i+=5){const big=i%30===0,r1=big?74:80,a=rad(i);
- g+=`<line x1="${100+r1*Math.sin(a)}" y1="${100-r1*Math.cos(a)}" x2="${100+88*Math.sin(a)}" y2="${100-88*Math.cos(a)}" stroke="${i===0?'#ff5d5d':'#5a6878'}" stroke-width="${big?2.5:1}"/>`}
- [['N',0,'#ff5d5d'],['E',90,'#e8eef5'],['S',180,'#e8eef5'],['W',270,'#e8eef5']].forEach(([t,a,c])=>{const r=rad(a),x=100+60*Math.sin(r),y=100-60*Math.cos(r);
- g+=`<text x="${x}" y="${y+7}" fill="${c}" font-size="20" font-weight="800" text-anchor="middle" transform="rotate(${a} ${x} ${y})">${t}</text>`});
- $('rose').innerHTML=g}
-
-function setMode(m){mode=m;save('gps.mode',m);$('mKtx').classList.toggle('on',m==='k');$('mAir').classList.toggle('on',m==='a');
- $('nextLbl').textContent=m==='k'?'진행 방향 가장 가까운 역':'진행 방향 가장 가까운 공항';
- $('dest').innerHTML=`<option value="">목적지 선택 (선택하면 남은 거리·도착 예상)</option>`+PLACES.filter(p=>p[1]===m).map(p=>`<option${p[0]===dest?' selected':''}>${p[0]}</option>`).join('');
- render()}
-$('mKtx').onclick=()=>setMode('k');$('mAir').onclick=()=>setMode('a');
-$('dest').onchange=e=>{dest=e.target.value;save('gps.dest',dest);render()};
-function status(t,c){$('status').textContent=t;$('dot').className='dot '+(c||'')}
-
-/* ---------- GPS 수신 ---------- */
-function onPos(p){
- const c=p.coords,t=Date.now();
- const pt={t,lat:c.latitude,lon:c.longitude,alt:c.altitude,acc:c.accuracy,spd:null};
- const dev=(c.speed!=null&&!isNaN(c.speed)&&c.speed>=0)?c.speed:null;
- const devH=(c.heading!=null&&!isNaN(c.heading))?c.heading:null;
- logRow(['gps',t,c.latitude,c.longitude,c.accuracy,c.altitude??'',dev??'',devH??'']);
- if(lastGpsRaw){gpsIv.push((t-lastGpsRaw)/1000);if(gpsIv.length>20)gpsIv.shift()}lastGpsRaw=t;hasSpd=dev!=null;hasHdg=devH!=null;
- if(blk&&t<blockUntil){const q=cur();if(q){const e=hav(q.lat,q.lon,c.latitude,c.longitude);blk.max=Math.max(blk.max,e);
-  blk.last={e,sig:q.sig,dv:dev!=null?(q.v-dev)*3.6:null,dh:devH!=null&&q.psi!=null?Math.abs(((q.psi-devH+540)%360)-180):null}}return}
- let v=dev,vAcc=0.5;
- if(last){
-  const dt=(t-last.t)/1000,d=hav(last.lat,last.lon,pt.lat,pt.lon);
-  if(dt<=0)return;
-  const vj=d/dt;
-  if(vj>340&&dt<60&&rej<3){rej++;status(`튀는 값 무시 (정확도 ±${Math.round(c.accuracy)} m)`,'warn');return}
-  if(vj>340){last=null;lastHdgPt=null;win=[];K.x=null;gpsPrev=null}
-  else if(t-lastFixT<=3000&&c.accuracy<=100&&last.acc<=100){S.dist+=d;if(vj>1)S.moving+=dt}
- }
- rej=0;
- if(!last)pt.brk=1;
- win.push(pt);while(win.length>1&&win[0].t<t-6000)win.shift();
- const ref=win[0];
- if(ref!==pt&&t-ref.t>=1000&&c.accuracy<=50){
-  const vc=hav(ref.lat,ref.lon,pt.lat,pt.lon)/((t-ref.t)/1000);
-  if(vc<340&&(v==null||(vc>3&&v<vc*0.3))){v=vc;vAcc=2}
- }
- let psiM=null,psiAcc=rad(5);
- if(devH!=null&&(v||0)>1.5)psiM=devH;
- else if(lastHdgPt&&hav(lastHdgPt.lat,lastHdgPt.lon,pt.lat,pt.lon)>Math.max(30,c.accuracy)){psiM=brg(lastHdgPt.lat,lastHdgPt.lon,pt.lat,pt.lon);psiAcc=rad(12)}
- if(!lastHdgPt||hav(lastHdgPt.lat,lastHdgPt.lon,pt.lat,pt.lon)>Math.max(30,c.accuracy))lastHdgPt=pt;
- if(psiM!=null)hd=psiM;
- // IMU 학습: GPS 속도 변화(가속)와 방향 변화(회전)를 IMU와 짝지음
- if(gpsPrev&&dev!=null&&gpsPrev.v!=null&&t-gpsPrev.t>=500&&t-gpsPrev.t<=3000&&c.accuracy<=30){
-  const dt=(t-gpsPrev.t)/1000;
-  imuLearn((dev-gpsPrev.v)/dt,(devH!=null&&gpsPrev.h!=null&&dev>3&&gpsPrev.v>3)?wrapPi(rad(devH-gpsPrev.h))/dt:null);
- }else I.bin={h:[0,0,0],r:0,n:0};
- gpsPrev={t,v:dev,h:devH};
- const gap=lastFixT?t-lastFixT:0;
- const inn=kfGps(pt.lat,pt.lon,Math.max(3,c.accuracy),v,vAcc,psiM,psiAcc,t);
- if(gap>5000&&inn!=null&&!demoQuiet)$('msg').textContent=`GPS 복귀 · ${fmtDur(gap/1000)} 끊긴 동안 추정 위치 오차 ${fmtKm(inn)}`;
- lastFixT=t;estDead=false;lastAlt=c.altitude;
- pt.spd=K.x?K.x[2]:v;
- if(K.x&&c.accuracy<=60&&K.x[2]*3.6>S.vmax)S.vmax=K.x[2]*3.6;
- if(!S.t0)S.t0=t;
- S.pts.push(pt);if(S.pts.length>30000)S.pts.splice(0,S.pts.length-30000);
- last=pt;
- status(`GPS 수신 중 · ±${Math.round(c.accuracy)} m${navigator.onLine?'':' · 오프라인'}`,c.accuracy<=30?'ok':'warn');
- if(t-saveT>15000){save('gps.trip',S);saveT=t}
- render();
-}
-let demoQuiet=false;
-let blockUntil=0,blk=null,tests=load('gps.tests',[]),logRows=[],imuCnt=0,imuHz=0,imuT=0,gpsIv=[],hasSpd=null,hasHdg=null,lastGpsRaw=0;
-const logRow=r=>{logRows.push(r);if(logRows.length>40000)logRows.splice(0,10000)};
-function onErr(e){
- if(e.code===1){stop();status('위치 권한이 거부됨','bad');$('msg').textContent='설정에서 이 사이트의 위치 권한을 허용하고 "정확한 위치"를 켜 주세요. 미리보기 화면처럼 위치가 막힌 곳에서는 "데모 주행"으로 확인할 수 있어요.'}
- else if(!lastFixT)status('위성 찾는 중… 창가로 옮겨 보세요','warn');
-}
-function start(){
- motionOn();
- if(!('geolocation' in navigator)){$('msg').textContent='이 브라우저는 위치 기능을 지원하지 않아요.';return}
- if(!isSecureContext){$('msg').textContent='위치는 https 주소에서만 동작해요.';return}
- watch=navigator.geolocation.watchPosition(onPos,onErr,{enableHighAccuracy:true,maximumAge:0,timeout:60000});
- $('go').textContent='정지';$('go').classList.add('stop');status('위성 찾는 중…','warn');$('msg').textContent='';
- if(!wake)toggleWake();
-}
-function stop(){
- if(demo){clearInterval(demo);demo=null;$('demo').textContent='▶ 데모 주행 (GPS 없이)'}
- if(watch!=null&&watch!==-1)navigator.geolocation.clearWatch(watch);
- watch=null;last=null;win=[];K.x=null;gpsPrev=null;lastFixT=0;estDead=false;blockUntil=0;if(blk&&!blk.done)blk.done=true;
- $('go').textContent='시작';$('go').classList.remove('stop');status('정지됨','');save('gps.trip',S);render();
-}
-$('go').onclick=()=>watch==null?start():stop();
-
-/* ---------- 주기 처리: 칼만 예측, GPS 끊김 시 관성 추정 ---------- */
-function tick(){
- const now=Date.now(),dt=lastTick?(now-lastTick)/1000:0;lastTick=now;
- if(now-imuT>=1000){if(imuT)imuHz=Math.round(imuCnt*1000/(now-imuT));imuCnt=0;imuT=now;
-  if(I.on){const u=imuInput();logRow(['imu',now,...I.hLP.map(v=>v.toFixed(3)),I.rLP.toFixed(4),u.a.toFixed(3),u.w.toFixed(4)])}
-  if(K.x&&watch!=null){const [la,lo]=toLL(K.x[0],K.x[1]);logRow(['kf',now,la.toFixed(6),lo.toFixed(6),K.x[2].toFixed(2),deg(K.x[3]).toFixed(1),Math.round(kfSig())])}
-  diag()}
- blkTick(now);
- if(watch==null||!K.x){render();return}
- const gap=now-lastFixT;
- if(gap>3000&&!estDead){
-  kfPredict(now);
-  const sig=kfSig();
-  if(sig>3000||gap>600000){estDead=true}
-  else{
-   S.dist+=K.x[2]*dt;if(K.x[2]>1)S.moving+=dt;
-   if(now-lastEstT>=2000){const [la,lo]=toLL(K.x[0],K.x[1]);S.pts.push({t:now,lat:la,lon:lo,alt:lastAlt,acc:sig,spd:K.x[2],est:1});lastEstT=now}
-   const u=imuInput();
-   status(`GPS 끊김 ${fmtDur(gap/1000)} · ${u.okA||u.okW?'관성 추정':'속도 유지 추정'} ±${fmtKm(sig)}`,'bad');
-  }
-  if(estDead)status(`GPS 끊김 ${fmtDur(gap/1000)} · 오차가 커서 추정 중단`,'bad');
- }else if(gap<=3000)kfPredict(now);
- render();
-}
-setInterval(tick,250);
-
-async function toggleWake(){
- if(wake){try{await wake.release()}catch(e){}wake=null;$('wake').classList.remove('on');$('wake').textContent='화면 켜두기';return}
- try{wake=await navigator.wakeLock.request('screen');$('wake').classList.add('on');$('wake').textContent='화면 켜둠 ✓'}
- catch(e){$('wake').textContent='화면 켜두기 미지원 · 자동잠금 늘려주세요'}
-}
-$('wake').onclick=toggleWake;
-document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&wake&&wake.released){wake=null;toggleWake()}});
-
-$('reset').onclick=()=>{const b=$('reset');if(b.dataset.c){S={pts:[],dist:0,vmax:0,t0:0,moving:0};last=null;win=[];hd=null;lastHdgPt=null;save('gps.trip',S);
- delete b.dataset.c;b.textContent='기록 초기화';render()}else{b.dataset.c=1;b.textContent='한 번 더 누르면 삭제';setTimeout(()=>{delete b.dataset.c;b.textContent='기록 초기화'},3000)}};
-
-$('gpx').onclick=()=>{
- const pts=S.pts.filter(p=>!p.est);
- if(!pts.length){$('msg').textContent='저장할 기록이 없어요.';return}
- const x=pts.map(p=>`<trkpt lat="${p.lat}" lon="${p.lon}">${p.alt!=null?`<ele>${p.alt.toFixed(1)}</ele>`:''}<time>${new Date(p.t).toISOString()}</time></trkpt>`).join('\n');
- const g=`<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="Offline GPS Dash" xmlns="http://www.topografix.com/GPX/1/1"><trk><name>${new Date(S.t0).toLocaleString()}</name><trkseg>\n${x}\n</trkseg></trk></gpx>`;
- const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([g],{type:'application/gpx+xml'}));
- a.download=`track-${new Date(S.t0).toISOString().slice(0,16).replace(/[:T]/g,'-')}.gpx`;document.body.appendChild(a);a.click();
- setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},1000)};
-
-/* ---------- 화면 ---------- */
-function cur(){
- if(!K.x||estDead||watch==null)return null;
- const [la,lo]=toLL(K.x[0],K.x[1]),sig=kfSig(),est=Date.now()-lastFixT>3000;
- return{lat:la,lon:lo,v:K.x[2],psi:K.x[2]>1.5&&K.P[3][3]<0.3?deg(K.x[3]):null,sig,est};
-}
-function render(){
- const c=cur(),p=last||S.pts[S.pts.length-1];
- const kmh=c?c.v*3.6:null;
- $('estB').hidden=!(c&&c.est);
- $('spd').textContent=kmh==null?'–':Math.round(kmh);
- $('spd2').textContent=kmh==null?'– kt · – m/s':`${Math.round(kmh/1.852)} kt · ${(kmh/3.6).toFixed(1)} m/s`;
- $('vmax').textContent=S.vmax?Math.round(S.vmax):'–';
- $('vavg').textContent=S.moving>10?Math.round(S.dist/S.moving*3.6):'–';
- const h=c?c.psi:(watch==null?null:hd);
- $('rose').setAttribute('transform',`rotate(${h==null?0:-h} 100 100)`);
- $('hdg').textContent=h==null?'–':`${Math.round(h)}°`;$('hdgTxt').textContent=h==null?'':dirTxt(h);
- $('dist').textContent=S.dist?fmtKm(S.dist):'–';
- $('elap').textContent=S.t0?fmtDur(((watch!=null?Date.now():(p?p.t:S.t0))-S.t0)/1000):'–';
- const q=c||p;
- if(q){
-  $('lat').textContent=q.lat.toFixed(5);$('lon').textContent=q.lon.toFixed(5);
-  $('acc').innerHTML=c&&c.est?`±${c.sig<1000?Math.round(c.sig)+' <small>m</small>':(c.sig/1000).toFixed(1)+' <small>km</small>'}`:p?`±${Math.round(p.acc)} <small>m</small>`:'–';
-  const alt=lastAlt??(p?p.alt:null);
-  $('alt').innerHTML=alt==null?'– <small>(미제공)</small>':mode==='a'?`${Math.round(alt*3.281).toLocaleString()} <small>ft</small><small class="l">${Math.round(alt).toLocaleString()} m</small>`:`${Math.round(alt)} <small>m</small>`;
-  const list=PLACES.filter(x=>x[1]===mode).map(x=>({n:x[0],d:hav(q.lat,q.lon,x[2],x[3]),b:brg(q.lat,q.lon,x[2],x[3])}));
-  let cand=list;if(h!=null){const ah=list.filter(x=>Math.abs(((x.b-h+540)%360)-180)<60&&x.d>800);if(ah.length)cand=ah}
-  cand.sort((a,b)=>a.d-b.d);const n=cand[0];
-  $('nextName').textContent=n?n.n:'–';
-  $('nextEta').textContent=n?`${fmtKm(n.d)}${kmh>5?` · 약 ${fmtDur(n.d/(kmh/3.6))} 후`:''}`:'';
-  const d=PLACES.find(x=>x[0]===dest);
-  if(d){const dd=hav(q.lat,q.lon,d[2],d[3]),arr=kmh>5?new Date(Date.now()+dd/(kmh/3.6)*1000):null;
-   $('destEta').textContent=`${fmtKm(dd)}${arr?` · ${arr.toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'})} 도착 예상`:''}`}
-  else $('destEta').textContent='–';
- }
- // IMU 상태
- const u=imuInput(),lv=!I.on?0:1+(I.nA>=8)+(I.nW>=6)+(u.okA&&u.okW);
- [...$('imuBars').children].forEach((e,i)=>e.classList.toggle('on',i<lv));
- $('imuTxt').innerHTML='<b>관성 센서(IMU)</b> · '+(I.denied?'사용 불가 (권한 거부 또는 미지원) — GPS 끊기면 속도 유지로만 추정':
-  !I.on?(watch!=null?'신호 기다리는 중':'시작하면 켜져요'):
-  u.okA&&u.okW?'보정 완료 ✓ GPS가 끊겨도 속도·방향을 이어서 추정해요':
-  `보정 중 — 가감속 ${Math.min(I.nA,8)}/8 · 커브 ${Math.min(I.nW,6)}/6${imuNote?` (${imuNote})`:''}`);
- drawSpeed();drawTrack(c);
-}
-
-function ctx(cv){const r=cv.getBoundingClientRect(),dpr=devicePixelRatio||1;cv.width=r.width*dpr;cv.height=r.height*dpr;const g=cv.getContext('2d');g.scale(dpr,dpr);return[g,r.width,r.height]}
-function drawSpeed(){
- const [g,W,H]=ctx($('cv'));const now=watch!=null?Date.now():(last?last.t:Date.now()),span=900000;
- const pts=S.pts.filter(p=>p.spd!=null&&p.t>now-span);
- const max=Math.max(50,...pts.map(p=>p.spd*3.6))*1.1;
- g.strokeStyle='#1f2a36';g.fillStyle='#8a98a8';g.font='12px system-ui';g.lineWidth=1;
- const step=max>400?200:max>150?50:20;
- for(let v=step;v<max;v+=step){const y=H-v/max*H;g.beginPath();g.moveTo(0,y);g.lineTo(W,y);g.stroke();g.fillText(v,4,y-3)}
- if(pts.length<2){g.fillText('기록이 쌓이면 그래프가 보여요',W/2-80,H/2);return}
- const sol=new Path2D(),das=new Path2D();
- pts.forEach((p,i)=>{if(!i)return;const a=pts[i-1],P=(p.est||a.est)?das:sol;P.moveTo(W-(now-a.t)/span*W,H-a.spd*3.6/max*H);P.lineTo(W-(now-p.t)/span*W,H-p.spd*3.6/max*H)});
- g.lineWidth=2.5;g.lineCap='round';g.strokeStyle='#4cc2ff';g.stroke(sol);g.setLineDash([5,5]);g.strokeStyle='#ffb84d';g.stroke(das);g.setLineDash([]);
-}
-function drawTrack(c){
- const [g,W,H]=ctx($('tr'));const pts=S.pts.filter(p=>p.est||p.acc<=150);
- if(!pts.length){g.fillStyle='#8a98a8';g.font='13px system-ui';g.fillText('위치를 받으면 궤적이 그려져요',W/2-85,H/2);return}
- let a=Infinity,b=-Infinity,cc=Infinity,d=-Infinity;pts.forEach(p=>{a=Math.min(a,p.lat);b=Math.max(b,p.lat);cc=Math.min(cc,p.lon);d=Math.max(d,p.lon)});
- if(c){a=Math.min(a,c.lat);b=Math.max(b,c.lat);cc=Math.min(cc,c.lon);d=Math.max(d,c.lon)}
- const k=Math.cos(rad((a+b)/2));let sy=b-a,sx=(d-cc)*k;const minS=0.03;
- if(Math.max(sx,sy)<minS){const m=(minS-sy)/2,n=(minS-sx)/2/k;a-=Math.max(0,m);b+=Math.max(0,m);cc-=Math.max(0,n);d+=Math.max(0,n);sy=b-a;sx=(d-cc)*k}
- const pad=24,sc=Math.min((W-2*pad)/sx,(H-2*pad)/sy),ox=(W-sx*sc)/2,oy=(H-sy*sc)/2;
- const X=lon=>ox+(lon-cc)*k*sc,Y=lat=>H-oy-(lat-a)*sc,m=pad/sc;g.font='12px system-ui';const boxes=[];
- PLACES.filter(q=>q[1]===mode).concat(PLACES.filter(q=>q[1]!==mode)).forEach(q=>{if(q[2]<a-m||q[2]>b+m||q[3]<cc-m/k||q[3]>d+m/k)return;const x=X(q[3]),y=Y(q[2]);
-  g.fillStyle=q[1]==='k'?'#ffb84d':'#c792ea';g.beginPath();g.arc(x,y,3.5,0,7);g.fill();
-  const w=g.measureText(q[0]).width,bx=[x+6,y-8,x+8+w,y+6];if(bx[2]>W||boxes.some(o=>bx[0]<o[2]&&bx[2]>o[0]&&bx[1]<o[3]&&bx[3]>o[1]))return;
-  boxes.push(bx);g.fillStyle='#8a98a8';g.fillText(q[0],x+7,y+4)});
- const sol=new Path2D(),das=new Path2D();
- pts.forEach((p,i)=>{if(!i||p.brk)return;const q=pts[i-1],P=(p.est||q.est)?das:sol;P.moveTo(X(q.lon),Y(q.lat));P.lineTo(X(p.lon),Y(p.lat))});
- const e=c||pts[pts.length-1];
- if(c&&c.est){const q=pts[pts.length-1];das.moveTo(X(q.lon),Y(q.lat));das.lineTo(X(c.lon),Y(c.lat))}
- g.lineJoin='round';g.lineCap='round';g.lineWidth=3;g.strokeStyle='#3ddc97';g.stroke(sol);g.setLineDash([6,6]);g.strokeStyle='#ffb84d';g.stroke(das);g.setLineDash([]);
- const x=X(e.lon),y=Y(e.lat);
- if(c&&c.est){const r=Math.min(Math.max(c.sig*sc/111320,6),W);g.fillStyle='rgba(255,184,77,.15)';g.beginPath();g.arc(x,y,r,0,7);g.fill()}
- const hh=c?c.psi:hd;
- g.save();g.translate(x,y);if(hh!=null)g.rotate(rad(hh));g.fillStyle='#4cc2ff';g.beginPath();
- if(hh!=null){g.moveTo(0,-11);g.lineTo(7,8);g.lineTo(0,4);g.lineTo(-7,8)}else g.arc(0,0,6,0,7);g.fill();g.restore();
- const km=sx*111.32;g.fillStyle='#8a98a8';g.fillText(`가로 약 ${km<10?km.toFixed(1):Math.round(km)} km`,8,H-8);
-}
-
-/* ---------- 실기 테스트 ---------- */
-function startBlock(sec){
- if(watch==null||!K.x||Date.now()-lastFixT>3000){$('msg').textContent='GPS가 잡힌 상태에서 이동 중에 눌러 주세요.';return}
- const u=imuInput();blockUntil=Date.now()+sec*1000;
- blk={sec,t0:Date.now(),max:0,last:null,imu:u.okA&&u.okW,v:K.x[2]*3.6,done:false};
- $('msg').textContent=`GPS ${sec}초 차단 시작 — ${blk.imu?'IMU 보정 완료 상태':'IMU 보정 전이라 속도 유지로만 추정'}`;
-}
-$('blk30').onclick=()=>startBlock(30);$('blk60').onclick=()=>startBlock(60);
-function blkTick(now){
- if(!blk||blk.done)return;
- if(now<blockUntil){const L=blk.last;$('blkLive').textContent=`차단 중 · ${Math.ceil((blockUntil-now)/1000)}초 남음`+(L?` · 실제 GPS 대비 위치 오차 ${fmtKm(L.e)} (추정 범위 ±${fmtKm(L.sig)})${L.dv!=null?` · 속도차 ${L.dv>0?'+':''}${L.dv.toFixed(1)} km/h`:''}${L.dh!=null?` · 방향차 ${Math.round(L.dh)}°`:''}`:'');return}
- blk.done=true;const L=blk.last;
- if(L){tests.unshift({at:new Date(blk.t0).toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'}),sec:blk.sec,e:Math.round(L.e),max:Math.round(blk.max),sig:Math.round(L.sig),v:Math.round(blk.v),imu:blk.imu,in:L.e<=L.sig*2});tests=tests.slice(0,20);save('gps.tests',tests)}
- $('blkLive').textContent=L?`차단 종료 · 최종 오차 ${fmtKm(L.e)} (최대 ${fmtKm(blk.max)})`:'차단 중 GPS가 안 들어와서 비교하지 못했어요.';
- renderTests();
-}
-function renderTests(){
- $('blkRes').innerHTML=tests.map(r=>`<div><span>${r.at} · ${r.sec}초 · ${r.v} km/h · ${r.imu?'IMU':'속도유지'}</span><b>오차 ${r.e} m${r.in?'':' ⚠'}</b></div>`).join('');
-}
-function diag(){
- const iv=gpsIv.length?gpsIv.reduce((a,b)=>a+b,0)/gpsIv.length:null,k=imuK();
- const sd=K.x?[Math.round(Math.sqrt(K.P[0][0]+K.P[1][1])),(Math.sqrt(K.P[2][2])*3.6).toFixed(1),Math.round(deg(Math.sqrt(K.P[3][3])))]:null;
- $('diag').innerHTML=`GPS: 간격 ${iv?iv.toFixed(1)+' s':'–'} · 속도값 ${hasSpd==null?'–':hasSpd?'제공':'없음(좌표로 계산)'} · 방향값 ${hasHdg==null?'–':hasHdg?'제공':'없음'}<br>`+
-  `IMU: ${I.on?imuHz+' Hz':I.denied?'권한 없음':'신호 없음'} · 앞방향 학습 ${I.nA} · 커브 학습 ${I.nW} · 회전부호 ${k?(k>0?'+':'-'):'?'} · 자이로 치우침 ${deg(I.bw).toFixed(2)}°/s<br>`+
-  `칼만: ${sd?`위치 ±${sd[0]} m · 속도 ±${sd[1]} km/h · 방향 ±${sd[2]}°`:'–'} · 로그 ${logRows.length}줄`;
-}
-$('csv').onclick=()=>{
- if(!logRows.length){$('msg').textContent='저장할 로그가 없어요. 시작을 누르고 움직여 보세요.';return}
- const head='type,t_ms,a,b,c,d,e,f\n# gps: lat,lon,acc_m,alt_m,speed_mps,heading_deg / imu: h_x,h_y,h_z,yawrate_rad,est_acc_mps2,est_yaw_rads / kf: lat,lon,v_mps,heading_deg,sigma_m\n';
- const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([head+logRows.map(r=>r.join(',')).join('\n')],{type:'text/csv'}));
- a.download=`sensor-log-${new Date().toISOString().slice(0,16).replace(/[:T]/g,'-')}.csv`;document.body.appendChild(a);a.click();
- setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},1000)};
-
-/* ---------- 데모: 비스듬히 놓인 폰의 IMU + GPS(중간에 터널)를 시뮬레이션 ---------- */
-$('demo').onclick=()=>{
- if(demo){stop();return}
- if(watch!=null)stop();
- S={pts:[],dist:0,vmax:0,t0:0,moving:0};last=null;win=[];hd=null;lastHdgPt=null;imuReset(false);imuNote='';
- const air=mode==='a',to=PLACES.find(p=>p[0]===(air?'제주공항':'부산'));
- if(!dest){dest=to[0];save('gps.dest',dest);setMode(mode)}
- const T={lat:air?37.4602:37.5547,lon:air?126.4407:126.9707,v:0,psi:rad(air?160:200),alt:air?7:40};
- window.__demoTruth=T;
- // 폰 자세: 차량좌표(오른쪽,앞,위) → 폰좌표 회전 (기울기 55°, 비틀림 35°)
- const ax=rad(55),az=rad(35),Rx=[[1,0,0],[0,Math.cos(ax),-Math.sin(ax)],[0,Math.sin(ax),Math.cos(ax)]],Rz=[[Math.cos(az),-Math.sin(az),0],[Math.sin(az),Math.cos(az),0],[0,0,1]];
- const Rd=M.mul(Rx,Rz),toDev=v=>Rd.map(r=>dot(r,v)),nz=s=>(Math.random()+Math.random()+Math.random()-1.5)*s*1.4;
- const tunnel=air?[95,155]:[100,150];
- watch=-1;$('go').textContent='정지';$('go').classList.add('stop');$('demo').textContent='■ 데모 멈춤';
- $('msg').textContent=`데모 주행 중 (가상 데이터) — ${tunnel[0]}~${tunnel[1]}초에 GPS가 끊기는 ${air?'구간':'터널'}이 있어요.`;
- let ts=0,nextFix=0;const dt=0.05,t0=Date.now();
- demo=setInterval(()=>{
-  ts=(Date.now()-t0)/1000;
-  // 속도·회전 프로파일
-  let a=0,w=0;
-  if(air){a=ts<40?2.2:ts<60?0.6:0;w=(ts>25&&ts<40)?0.02:(ts>70&&ts<82)?-0.02:(ts>110&&ts<128)?0.015:0;if(ts<60)T.alt=Math.min(10668,T.alt+T.v*0.2*dt);else T.alt=Math.min(10668,T.alt+15*dt)}
-  else{a=ts<45?1.4:ts<60?0:ts<72?-1.0:ts<90?0.9:(ts>105&&ts<120)?-0.8:(ts>125&&ts<135)?0.6:0;
-       w=(ts>30&&ts<42)?0.012:(ts>75&&ts<85)?-0.015:(ts>128&&ts<142)?0.014:0}
-  const vmax=air?250:84;T.v=clamp(T.v+a*dt,0,vmax);if(T.v===0||T.v===vmax)a=0;T.psi+=w*dt;
-  const dd=T.v*dt/R,p1=rad(T.lat),l1=rad(T.lon),p2=Math.asin(Math.sin(p1)*Math.cos(dd)+Math.cos(p1)*Math.sin(dd)*Math.cos(T.psi));
-  T.lon=deg(l1+Math.atan2(Math.sin(T.psi)*Math.sin(dd)*Math.cos(p1),Math.cos(dd)-Math.sin(p1)*Math.sin(p2)));T.lat=deg(p2);
-  // IMU: 진행가속 + 원심가속(오른쪽) + 진동잡음, 자이로(위축 기준 반시계 +)
-  const lin=[T.v*w+nz(0.25),a+nz(0.25),nz(0.2)],dl=toDev(lin),dg=toDev([lin[0],lin[1],lin[2]+9.81]),rot=toDev([nz(0.01),nz(0.01),-w+nz(0.004)+0.003]);
-  onMotion(dg,dl,rot,dt);
-  // GPS 1초마다, 터널 구간은 수신 없음
-  if(ts>=nextFix){nextFix=Math.floor(ts)+1;
-   if(!(ts>=tunnel[0]&&ts<tunnel[1])){const n=4/111320;
-    onPos({coords:{latitude:T.lat+nz(n),longitude:T.lon+nz(n/Math.cos(rad(T.lat))),accuracy:5,altitude:T.alt,speed:Math.max(0,T.v+nz(0.15)),heading:T.v>1?(deg(T.psi)+nz(1.5)+360)%360:NaN}})}}
- },dt*1000);
-};
-
-addEventListener('pagehide',()=>save('gps.trip',S));
-new ResizeObserver(()=>render()).observe(document.body);
-setMode(mode);renderTests();diag();
-if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
-}
-</script>
+<script type="module" src="js/app.js"></script>
 </body>
 </html>
