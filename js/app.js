@@ -128,7 +128,7 @@ function saveCsv() {
   if (!H.gps.length) return msg('저장할 기록이 없어요.');
   const rows = ['type,t_ms,lat,lon,speed_mps,heading_deg,acc_or_sigma_m,flag,imu_a_est_mps2,imu_yaw_est_dps,imu_h_raw_mps2,imu_yaw_raw_dps,imu_hz,align_a,align_w,yaw_sign,gyro_bias_dps'];
   H.gps.forEach(p => rows.push(['gps', p.t, p.lat, p.lon, p.spd ?? '', p.hdg ?? '', p.acc, p.blocked ? 'blocked' : p.rejected ? 'rejected' : p.still ? 'still' : ''].join(',')));
-  H.kf.forEach(p => rows.push(['kf', p.t, p.lat.toFixed(7), p.lon.toFixed(7), p.v.toFixed(3), p.psi.toFixed(2), p.sig.toFixed(2), p.out ? 'imu_only' : ''].join(',')));
+  H.kf.forEach(p => rows.push(['kf', p.t, p.lat.toFixed(7), p.lon.toFixed(7), p.v.toFixed(3), p.v > 1.5 && p.sp <= 30 ? p.psi.toFixed(2) : '', p.sig.toFixed(2), [p.out ? 'imu_only' : '', p.v > 1.5 && p.sp <= 30 ? '' : 'heading_na'].filter(Boolean).join('|')].join(',')));
   H.imu.forEach(p => rows.push(['imu', p.t, '', '', '', '', '', '', p.a == null ? '' : p.a.toFixed(3), p.w == null ? '' : p.w.toFixed(3),
     p.h.toFixed(3), p.r.toFixed(3), p.hz, p.nA, p.nW, p.s, p.bg.toFixed(4)].join(',')));
   const a = document.createElement('a');
@@ -143,10 +143,30 @@ const fmtM = m => (m < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toFixed(1)} k
 const fmtT = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 function chip(id, cls, text) { $(id).className = 'chip ' + cls; $(id).lastChild.textContent = text; }
 
+// 무엇을 추정할 수 있는지와 그 이유
+function estState(c) {
+  if (!mode && !kf.x) return { pos: false, hdg: false, why: '시작 전', hdgWhy: '시작 전' };
+  if (!kf.x) { const w = mode === 'real' ? 'GPS 기다리는 중' : '시작 중'; return { pos: false, hdg: false, why: w, hdgWhy: w }; }
+  if (!c) return { pos: false, hdg: false, why: '정지됨', hdgWhy: '정지됨' };
+  if (c.sig > 5000) return { pos: false, hdg: false, why: 'GPS 끊긴 지 오래돼 추정 중단', hdgWhy: 'GPS 끊긴 지 오래돼 추정 중단' };
+  if (c.v <= 1.5) return { pos: true, hdg: false, hdgWhy: '정지·저속 — 움직여야 알 수 있어요' };
+  const sp = deg(Math.sqrt(kf.P[3][3]));
+  if (sp > 30) return { pos: true, hdg: false, hdgWhy: `불확실도가 너무 큼 (±${Math.round(2 * sp)}°)` };
+  return { pos: true, hdg: true };
+}
+function setRo(k, ok, val, sub, html) {
+  const card = $('r' + k).closest('.r');
+  card.classList.toggle('na', !ok);
+  if (ok) { html ? ($('r' + k).innerHTML = val) : ($('r' + k).textContent = val); }
+  else $('r' + k).textContent = '추정 불가';
+  $('r' + k + 's').textContent = sub;
+}
+
 function current() {
   if (!kf.x || !mode) return null;
   const [lat, lon] = kf.ll();
-  return { lat, lon, v: kf.x[2], psi: deg(kf.x[3]), sig: kf.sigma(), out: Date.now() - lastFixT > OUT_MS };
+  const hdgOk = kf.x[2] > 1.5 && deg(Math.sqrt(kf.P[3][3])) <= 30;
+  return { lat, lon, v: kf.x[2], psi: deg(kf.x[3]), sig: kf.sigma(), out: Date.now() - lastFixT > OUT_MS, hdgOk };
 }
 
 function render() {
@@ -164,17 +184,14 @@ function render() {
   if (!c) chip('cKf', '', '필터 대기');
   else chip('cKf', c.out ? 'warn' : 'ok', `${c.out ? 'IMU 추정' : 'GPS+IMU'} ±${fmtM(2 * c.sig)}`);
 
-  // 숫자
-  const lost = !c || c.sig > 5000;
-  $('rV').textContent = lost ? '–' : Math.round(c.v * 3.6);
-  $('rVs').textContent = lost ? '' : `±${(2 * Math.sqrt(kf.P[2][2]) * 3.6).toFixed(1)} km/h`;
-  const moving = !lost && c.v > 1.5;
-  $('rH').textContent = moving ? Math.round(c.psi) : '–';
-  $('rHs').textContent = moving ? `${DIRS[Math.round(c.psi / 22.5) % 16]} · ±${Math.round(2 * deg(Math.sqrt(kf.P[3][3])))}°` : lost ? '' : '정지 중';
-  $('needle').setAttribute('transform', `rotate(${moving ? c.psi : 0} 20 20)`);
-  $('needle').style.opacity = moving ? 1 : 0.25;
-  $('rP').innerHTML = lost ? '–' : `${c.lat.toFixed(5)}<br>${c.lon.toFixed(5)}`;
-  $('rPs').textContent = lost ? '' : `±${fmtM(2 * c.sig)} (95%)`;
+  // 숫자 — 추정할 수 없으면 '추정 불가'와 이유를 표시
+  const st = estState(c);
+  setRo('V', st.pos, st.pos ? Math.round(c.v * 3.6) : '', st.pos ? `±${(2 * Math.sqrt(kf.P[2][2]) * 3.6).toFixed(1)} km/h` : st.why);
+  setRo('H', st.hdg, st.hdg ? Math.round(c.psi) : '', st.hdg ? `${DIRS[Math.round(c.psi / 22.5) % 16]} · ±${Math.round(2 * deg(Math.sqrt(kf.P[3][3])))}°` : st.hdgWhy);
+  setRo('P', st.pos, st.pos ? `${c.lat.toFixed(5)}<br>${c.lon.toFixed(5)}` : '', st.pos ? `±${fmtM(2 * c.sig)} (95%)` : st.why, true);
+  $('needle').setAttribute('transform', `rotate(${st.hdg ? c.psi : 0} 20 20)`);
+  $('needle').style.opacity = st.hdg ? 1 : 0;
+  $('cmpQ').style.opacity = st.hdg ? 0 : 1;
   $('blk').classList.toggle('on', blocked);
   $('go').textContent = mode === 'real' ? '정지' : '시작'; $('go').classList.toggle('stop', mode === 'real');
   $('sim').textContent = mode === 'sim' ? '시뮬레이션 정지' : '시뮬레이션'; $('sim').classList.toggle('on', mode === 'sim');
@@ -190,15 +207,18 @@ function render() {
   for (const p of H.kf) { if (p.out && !o) o = [p.t, p.t]; if (p.out && o) o[1] = p.t; if (!p.out && o) { outages.push(o); o = null; } }
   if (o) outages.push(o);
   const okG = H.gps.filter(p => !p.blocked && !p.rejected), refG = H.gps.filter(p => p.blocked);
+  const hdgNa = []; let q = null;
+  for (const p of H.kf) { const na = !(p.v > 1.5 && p.sp <= 30); if (na && !q) q = [p.t, p.t]; if (na && q) q[1] = p.t + 500; if (!na && q) { hdgNa.push(q); q = null; } }
+  if (q) hdgNa.push([q[0], t1]);
 
   timeChart($('cvV'), { t0, t1, outages, yMin: 0, series: [
     { type: 'band', color: COL.band, pts: H.kf.map(p => [p.t, Math.max(0, (p.v - 2 * p.sv) * 3.6), (p.v + 2 * p.sv) * 3.6]) },
+    { type: 'dots', color: COL.gps, r: 1.8, pts: okG.filter(p => p.spd != null).map(p => [p.t, p.spd * 3.6]), hollow: refG.filter(p => p.spd != null).map(p => [p.t, p.spd * 3.6]) },
     { type: 'line', color: COL.kf, pts: H.kf.map(p => [p.t, p.v * 3.6]) },
-    { type: 'dots', color: COL.gps, pts: okG.filter(p => p.spd != null).map(p => [p.t, p.spd * 3.6]), hollow: refG.filter(p => p.spd != null).map(p => [p.t, p.spd * 3.6]) },
   ] });
-  timeChart($('cvH'), { t0, t1, outages, yMin: 0, yMax: 360, series: [
-    { type: 'line', color: COL.kf, wrap: true, pts: H.kf.filter(p => p.v > 1.5).map(p => [p.t, p.psi]) },
-    { type: 'dots', color: COL.gps, pts: okG.filter(p => p.hdg != null).map(p => [p.t, p.hdg]), hollow: refG.filter(p => p.hdg != null).map(p => [p.t, p.hdg]) },
+  timeChart($('cvH'), { t0, t1, outages, na: hdgNa, yMin: 0, yMax: 360, series: [
+    { type: 'dots', color: COL.gps, r: 1.8, pts: okG.filter(p => p.hdg != null).map(p => [p.t, p.hdg]), hollow: refG.filter(p => p.hdg != null).map(p => [p.t, p.hdg]) },
+    { type: 'line', color: COL.kf, wrap: true, pts: H.kf.filter(p => p.v > 1.5 && p.sp <= 30).map(p => [p.t, p.psi]) },
   ] });
   timeChart($('cvE'), { t0, t1, outages, yMin: 0, fmt: v => (v >= 1000 ? `${v / 1000}k` : v), series: [
     { type: 'line', color: COL.out, dash: [5, 4], width: 1.6, pts: H.kf.map(p => [p.t, 2 * p.sig]) },

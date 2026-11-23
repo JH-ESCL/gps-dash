@@ -20,7 +20,7 @@ function niceStep(range, n) {
 }
 
 // series: { pts:[[t,y]] 또는 band는 [[t,lo,hi]], type:'line'|'dots'|'band', color, hollow:[[t,y]], wrap:true(0~360 끊김 처리) }
-export function timeChart(cv, { t0, t1, series, outages = [], yMin, yMax, fmt = v => v }) {
+export function timeChart(cv, { t0, t1, series, outages = [], na = [], yMin, yMax, fmt = v => v }) {
   const [g, W, H] = setup(cv);
   const L = 34, Rr = 8, T = 8, B = 18, pw = W - L - Rr, ph = H - T - B;
   const inWin = p => p[0] >= t0 && p[0] <= t1;
@@ -36,6 +36,14 @@ export function timeChart(cv, { t0, t1, series, outages = [], yMin, yMax, fmt = 
   if (hi - lo < 1e-9) hi = lo + 1;
   const X = t => L + (t - t0) / (t1 - t0) * pw, Y = v => T + (1 - (v - lo) / (hi - lo)) * ph;
 
+  // 추정 불가 구간: 회색 빗금
+  for (const [a, b] of na) if (b >= t0 && a <= t1) {
+    const x0 = X(Math.max(a, t0)), x1 = X(Math.min(b, t1));
+    g.fillStyle = 'rgba(135,150,168,.10)'; g.fillRect(x0, T, Math.max(1, x1 - x0), ph);
+    g.save(); g.beginPath(); g.rect(x0, T, Math.max(1, x1 - x0), ph); g.clip(); g.strokeStyle = 'rgba(135,150,168,.22)'; g.lineWidth = 1;
+    for (let x = x0 - ph; x < x1; x += 7) { g.beginPath(); g.moveTo(x, T + ph); g.lineTo(x + ph, T); g.stroke(); }
+    g.restore();
+  }
   g.fillStyle = COL.outBg;
   for (const [a, b] of outages) if (b >= t0 && a <= t1) { const x0 = X(Math.max(a, t0)), x1 = X(Math.min(b, t1)); g.fillRect(x0, T, Math.max(1, x1 - x0), ph); }
 
@@ -144,9 +152,17 @@ export function drawTrack(cv, { ref, gps, kf, cur, follow }) {
     g.fillStyle = cur.out ? 'rgba(255,184,77,.16)' : 'rgba(76,194,255,.16)';
     g.strokeStyle = cur.out ? COL.out : COL.kf; g.lineWidth = 1;
     g.beginPath(); g.arc(X(x), Y(y), Math.min(r, 4 * W), 0, 7); g.fill(); g.stroke();
-    g.save(); g.translate(X(x), Y(y)); g.rotate(cur.psi * Math.PI / 180);
-    g.fillStyle = '#fff'; g.strokeStyle = cur.out ? COL.out : COL.kf; g.lineWidth = 2;
-    g.beginPath(); g.moveTo(0, -12); g.lineTo(8, 8); g.lineTo(0, 3); g.lineTo(-8, 8); g.closePath(); g.fill(); g.stroke();
+    g.save(); g.translate(X(x), Y(y));
+    if (cur.hdgOk) {
+      g.rotate(cur.psi * Math.PI / 180);
+      g.fillStyle = '#fff'; g.strokeStyle = cur.out ? COL.out : COL.kf; g.lineWidth = 2;
+      g.beginPath(); g.moveTo(0, -12); g.lineTo(8, 8); g.lineTo(0, 3); g.lineTo(-8, 8); g.closePath(); g.fill(); g.stroke();
+    } else {   // 방향 추정 불가: 점 + '방향?' 표시
+      g.fillStyle = '#fff'; g.strokeStyle = cur.out ? COL.out : COL.kf; g.lineWidth = 2;
+      g.beginPath(); g.arc(0, 0, 6, 0, 7); g.fill(); g.stroke();
+      g.fillStyle = COL.text; g.font = '12px system-ui,sans-serif'; g.textAlign = 'left'; g.textBaseline = 'middle';
+      g.fillText('방향 추정 불가', 11, 0);
+    }
     g.restore();
   }
 }
