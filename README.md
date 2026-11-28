@@ -2,7 +2,7 @@
 
 폰의 GPS와 IMU(가속도계·자이로)를 확장 칼만필터(EKF)로 합쳐 **위치·속도·방향**을 추정하고, 그 과정을 시각화하는 웹앱입니다. 오프라인에서도 동작합니다(PWA).
 
-**실행:** https://jh-escl.github.io/gps-dash/
+**실행:** https://jh-escl.github.io/gps-dash/ · **변경 기록:** [CHANGELOG.md](CHANGELOG.md)
 
 ## 필터
 상태 `x = [동 E, 북 N, 속력 v, 방향 ψ, 자이로 치우침 b_g]`
@@ -35,6 +35,7 @@ js/imu.js       IMU 전처리 + 자동 정렬
 js/sim.js       시뮬레이터
 js/viz.js       차트·궤적 그리기
 js/app.js       센서 연결, 루프, 화면 갱신
+js/version.js   앱 버전
 sw.js           오프라인 캐시
 ```
 

@@ -1,5 +1,5 @@
-const C = 'kf-viz-v6';
-const CORE = ['./', './index.html', './js/app.js', './js/kalman.js', './js/imu.js', './js/sim.js', './js/viz.js'];
+const C = 'kf-viz-1.6.0';   // js/version.js 와 맞춤
+const CORE = ['./', './index.html', './js/app.js', './js/kalman.js', './js/imu.js', './js/sim.js', './js/viz.js', './js/version.js'];
 const EXTRA = ['./manifest.webmanifest', './icon.svg', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', e => {

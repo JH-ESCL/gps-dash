@@ -3,6 +3,7 @@ import { EKF, rad, deg, wrapPi, hav } from './kalman.js';
 import { Imu, bindDeviceMotion } from './imu.js';
 import { Sim } from './sim.js';
 import { timeChart, drawTrack, COL } from './viz.js';
+import { VERSION, BUILD } from './version.js';
 
 const $ = id => document.getElementById(id);
 const OUT_MS = 2500;       // 이 시간 동안 GPS 보정이 없으면 '관성 추정' 구간
@@ -128,13 +129,15 @@ function msg(t) { $('msg').textContent = t; }
 function saveCsv() {
   if (!H.gps.length) return msg('저장할 기록이 없어요.');
   const rows = ['type,t_ms,lat,lon,speed_mps,heading_deg,acc_or_sigma_m,flag,imu_a_est_mps2,imu_yaw_est_dps,imu_h_raw_mps2,imu_yaw_raw_dps,imu_hz,align_a,align_w,yaw_sign,gyro_bias_dps,acc_x,acc_y,acc_z,gyr_x_rads,gyr_y_rads,gyr_z_rads,gyro_prop_sign'];
+  const ua = navigator.userAgent.replace(/[,;\n]/g, ' ');
+  rows.push(['meta', H.gps[0].t, '', '', '', '', '', `app_version=${VERSION};build=${BUILD};mode=${mode || 'stopped'};ua=${ua}`].join(','));
   H.gps.forEach(p => rows.push(['gps', p.t, p.lat, p.lon, p.spd ?? '', p.hdg ?? '', p.acc, p.blocked ? 'blocked' : p.rejected ? 'rejected' : p.still ? 'still' : ''].join(',')));
   H.kf.forEach(p => rows.push(['kf', p.t, p.lat.toFixed(7), p.lon.toFixed(7), p.v.toFixed(3), p.v > 1.5 && p.sp <= 30 ? p.psi.toFixed(2) : '', p.sig.toFixed(2), [p.out ? 'imu_only' : '', p.v > 1.5 && p.sp <= 30 ? '' : 'heading_na'].filter(Boolean).join('|')].join(',')));
   H.imu.forEach(p => rows.push(['imu', p.t, '', '', '', '', '', '', p.a == null ? '' : p.a.toFixed(3), p.w == null ? '' : p.w.toFixed(3),
     p.h.toFixed(3), p.r.toFixed(3), p.hz, p.nA, p.nW, p.s, p.bg.toFixed(4), ...(p.raw ? p.raw.map(v => v.toFixed(4)) : ['', '', '', '', '', '']), p.gs].join(',')));
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([rows.join('\n')], { type: 'text/csv' }));
-  a.download = `kf-log-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}.csv`;
+  a.download = `kf-log-v${VERSION}-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}.csv`;
   document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
 }
 
@@ -267,6 +270,8 @@ function ageText(now) {
 setInterval(render, 250);
 new ResizeObserver(render).observe(document.body);
 
+$('ver').textContent = `v${VERSION}`;
+$('ver').title = `빌드 ${BUILD}`;
 resetHist();
 render();
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
