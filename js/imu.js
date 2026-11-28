@@ -14,7 +14,7 @@ export class Imu {
 
   reset(note = '') {
     Object.assign(this, {
-      g: null, up: null, hLP: [0, 0, 0], rLP: 0,
+      g: null, gc: null, ge: null, up: null, up0: null, hLP: [0, 0, 0], rLP: 0,
       bin: { h: [0, 0, 0], r: 0, n: 0 },
       A: M.diag([0.05, 0.05, 0.05, 0.05]), b: [0, 0, 0, 0], f: null, nA: 0,
       Srr: 0, Srp: 0, Spp: 0, nW: 0, note, tilt: 0,
@@ -24,28 +24,48 @@ export class Imu {
   // aig: 중력 포함 가속, lin: 중력 제외 가속(없으면 null), rot: 각속도(rad/s), 모두 폰 좌표
   sample(aig, lin, rot, dt) {
     this.on = true; this.last = Date.now(); this.cnt++;
-    // 중력 방향: 짧게 평균한 가속이 ≈9.8이고 회전이 거의 없을 때만 천천히 갱신
-    // → 커브의 원심가속, 가감속에 기울지 않음
+    // 원시값 누적(기록용): 중력 포함 가속 3축 + 자이로 3축 평균
+    const R6 = this.raw || (this.raw = { s: [0, 0, 0, 0, 0, 0], n: 0 });
+    aig.concat(rot).forEach((v, i) => { R6.s[i] += v; }); R6.n++;
     const k1 = Math.min(1, dt / 0.3);
     this.aLP = this.aLP ? this.aLP.map((v, i) => v + k1 * (aig[i] - v)) : aig.slice();
-    this.wLP = (this.wLP ?? 0) + k1 * (Math.hypot(...rot) - (this.wLP ?? 0));
-    if (!this.g) this.g = aig.slice();
-    const diff = Math.hypot(...this.aLP.map((v, i) => v - this.g[i]));
-    if (diff < 0.35 && this.wLP < 0.03) { const k = Math.min(1, dt / 5); this.g = this.g.map((v, i) => v + k * (this.aLP[i] - v)); }
+    // 중력 방향: 상보 필터 — 자이로로 폰 회전을 따라가고(g ← g + (g×ω)dt), 가속도계로 천천히 보정.
+    // 손에 든 폰처럼 자세가 계속 바뀌어도 '위쪽'을 놓치지 않음.
+    // 기기마다 자이로 좌표 부호가 다를 수 있어 +ω, −ω 두 후보를 함께 돌리고 가속도계와 더 잘 맞는 쪽을 씀.
+    if (!this.gc) { this.gc = [aig.slice(), aig.slice()]; this.ge = [0, 0]; }
+    else {
+      this.gc = this.gc.map((g, c) => {
+        const sg = c ? -1 : 1, [gx, gy, gz] = g, [wx, wy, wz] = rot.map(v => v * sg * dt);
+        let n = [gx + (gy * wz - gz * wy), gy + (gz * wx - gx * wz), gz + (gx * wy - gy * wx)];
+        const d = Math.hypot(...this.aLP.map((v, i) => v - n[i]));
+        const k = Math.min(1, dt / (d < 0.5 ? 1.5 : 15));      // 차량 가속(원심·가감속) 중엔 아주 천천히만 보정
+        n = n.map((v, i) => v + k * (this.aLP[i] - v));
+        this.ge[c] += Math.min(1, dt / 10) * (d - this.ge[c]);
+        return n;
+      });
+    }
+    this.g = this.gc[this.ge[0] <= this.ge[1] ? 0 : 1];
     const gm = Math.hypot(...this.g) || 1, up = this.g.map(v => v / gm);
     this.up = up;
     const a = lin || aig.map((v, i) => v - this.g[i]);
     const av = dot(a, up), h = a.map((v, i) => v - av * up[i]);
-    const r = dot(rot, up);
+    const r = dot(rot, up);                                    // 수직축 회전: 폰 자세와 무관
     const al = Math.min(1, dt / 0.3), ar = Math.min(1, dt / 0.1);
     this.hLP = this.hLP.map((v, i) => v + al * (h[i] - v));
     this.rLP += ar * (r - this.rLP);
     this.bin.h = this.bin.h.map((v, i) => v + h[i]); this.bin.r += r; this.bin.n++;
-    // 폰 자세 변화 감지: 짧은 평균 가속이 중력 방향과 30° 넘게 어긋난 상태가 3초 지속되면 재정렬
-    const cosA = dot(this.aLP, this.g) / ((Math.hypot(...this.aLP) || 1) * gm);
-    if (cosA < Math.cos(30 * Math.PI / 180)) { this.tilt += dt; if (this.tilt > 3) { this.reset('폰 자세가 바뀌어 재정렬'); return; } }
-    else this.tilt = 0;
+    // 폰 자세가 30° 넘게 바뀐 채 3초 지나면 '진행방향 가속' 정렬만 다시 (회전 정렬은 자세와 무관해 유지)
+    if (this.up0 && dot(up, this.up0) < Math.cos(30 * Math.PI / 180)) {
+      this.tilt += dt;
+      if (this.tilt > 3) { this.resetAccel(); this.note = '폰 자세가 바뀌어 가속 재정렬'; }
+    } else this.tilt = 0;
   }
+
+  resetAccel() { Object.assign(this, { A: M.diag([0.05, 0.05, 0.05, 0.05]), b: [0, 0, 0, 0], f: null, nA: 0, up0: null, tilt: 0 }); }
+
+
+  // 기록용 원시값 평균을 꺼내고 비움
+  takeRaw() { const R6 = this.raw; if (!R6 || !R6.n) return null; const m = R6.s.map(v => v / R6.n); this.raw = { s: [0, 0, 0, 0, 0, 0], n: 0 }; return m; }
 
   clearBin() { this.bin = { h: [0, 0, 0], r: 0, n: 0 }; }
 
@@ -54,6 +74,7 @@ export class Imu {
     const { n } = this.bin, h = [...this.bin.h.map(v => v / (n || 1)), 1], r = this.bin.r / (n || 1);
     this.clearBin();
     if (n < 3 || !this.up) return;
+    if (!this.up0) this.up0 = this.up.slice();
     const lam = 0.997;
     if (aG != null && Math.abs(aG) < 4) {
       this.A = this.A.map((row, i) => row.map((v, j) => lam * v + h[i] * h[j]));

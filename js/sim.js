@@ -15,7 +15,7 @@ const ROUTE = [
 const LOOP = ROUTE.reduce((s, p) => s + p[0], 0);
 
 export class Sim {
-  constructor(onGps, onImu) { this.onGps = onGps; this.onImu = onImu; this.timer = null; }
+  constructor(onGps, onImu, opt = {}) { this.onGps = onGps; this.onImu = onImu; this.timer = null; this.hand = !!opt.hand; }
 
   start() {
     this.T = { lat: 37.5547, lon: 126.9707, v: 0, psi: rad(35) };
@@ -46,10 +46,18 @@ export class Sim {
     T.lat = deg(p2);
 
     // IMU (차량 좌표 → 폰 좌표)
-    const toDev = v => this.Rd.map(r => dot(r, v));
+    // 손에 든 폰: 폰이 자기 x축으로 ±25° 정도 계속 흔들림 (자이로에 손 회전이 더해짐)
+    const ts = (now - this.t0) / 1000;
+    let C = this.Rd, wHand = [0, 0, 0];
+    if (this.hand) {
+      const th = 0.3 * Math.sin(0.9 * ts) + 0.15 * Math.sin(2.3 * ts + 1), thd = 0.27 * Math.cos(0.9 * ts) + 0.345 * Math.cos(2.3 * ts + 1);
+      const c = Math.cos(th), s = Math.sin(th);
+      C = M.mul([[1, 0, 0], [0, c, -s], [0, s, c]], this.Rd); wHand = [-thd, 0, 0];
+    }
+    const toDev = v => C.map(r => dot(r, v));
     const lin = [T.v * w + gauss(0.3), a + gauss(0.3), gauss(0.3)];
-    this.onImu(toDev([lin[0], lin[1], lin[2] + 9.81]), toDev(lin),
-      toDev([gauss(0.01), gauss(0.01), -w + this.gyroBias + gauss(0.005)]), dt);
+    const gyro = toDev([gauss(0.01), gauss(0.01), -w + this.gyroBias + gauss(0.005)]).map((v, i) => v + wHand[i]);
+    this.onImu(toDev([lin[0], lin[1], lin[2] + 9.81]), toDev(lin), gyro, dt);
 
     // GPS 1 Hz
     if (now >= this.nextFix) {

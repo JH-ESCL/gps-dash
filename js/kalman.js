@@ -65,7 +65,9 @@ export class EKF {
     }
     this.gyroOn = u.okW;
     const [e, n, v, p, bg] = this.x, s = Math.sin(p), c = Math.cos(p);
-    const a = u.okA ? u.a : 0, w = u.okW ? u.s * u.r - bg : 0;
+    // 차량이 낼 수 있는 회전 속도로 제한 (횡가속 ≤ 8 m/s²): 손으로 폰을 돌린 큰 회전이 방향을 망치지 않게
+    const wMax = Math.max(0.15, 8 / Math.max(v, 1));
+    const a = u.okA ? u.a : 0, w = u.okW ? Math.max(-wMax, Math.min(wMax, u.s * u.r - bg)) : 0;
     this.x = [e + v * s * h, n + v * c * h, Math.max(0, v + a * h), ((p + w * h) % TAU + TAU) % TAU, bg];
     const F = [
       [1, 0, s * h, v * c * h, 0],
