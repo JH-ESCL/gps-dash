@@ -63,6 +63,9 @@ h2{font-size:14px;margin:0;font-weight:700}
 .nt{background:#0d131b;border-radius:10px;padding:8px 10px}
 .nv{font-size:clamp(18px,5.5vw,26px);font-weight:800;margin-top:2px;white-space:nowrap}
 .mcap{font-size:12px;color:var(--dim);margin-top:4px}
+.cal{display:flex;gap:10px;align-items:center;justify-content:space-between;margin-top:10px;padding:9px 10px;border-radius:10px;background:#0d131b;font-size:13px}
+.cal span{color:var(--dim);font-size:12px}
+.cal button{flex:none;min-height:34px;padding:0 12px;border-radius:8px;border:1px solid var(--line);background:none;color:var(--dim);font:inherit;font-size:12px}
 .bar{position:fixed;left:0;right:0;bottom:0;background:rgba(10,13,18,.94);backdrop-filter:blur(8px);border-top:1px solid var(--line);
   padding:10px 12px calc(10px + env(safe-area-inset-bottom))}
 .bar .in{max-width:980px;margin:0 auto}
@@ -118,6 +121,7 @@ code{color:var(--ink)}
       <div class="nt"><div class="k">칼만 게인 ‖K̃‖<sub>F</sub></div><div class="nv" id="nK">–</div><div class="mcap">클수록 GPS를 많이 반영 (무차원)</div></div>
       <div class="nt"><div class="k">위치 잔차 ‖y<sub>E,N</sub>‖</div><div class="nv" id="nY">–</div><div class="mcap">예측과 GPS 위치 차이</div></div>
     </div>
+    <div class="cal"><div id="calTxt"></div><button id="calClr" hidden>지우기</button></div>
     <div class="mcap" style="margin-top:6px">‖·‖<sub>F</sub> = 프로베니우스 노름(원소 제곱합의 제곱근). ‖P‖는 SI 단위 기준이라 주로 위치 분산(m²)이 좌우하고, K̃는 원소마다 "잔차 1σ가 상태를 보정 전 σ의 몇 배만큼 움직이는지"로 단위를 없앤 값이에요.</div>
   </section>
 

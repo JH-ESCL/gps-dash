@@ -8,9 +8,24 @@ import { M } from './kalman.js';
 const dot = (a, b) => a.reduce((s, v, i) => s + v * b[i], 0);
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const NEED_A = 8, NEED_W = 6;
+const loadCal = k => { try { const v = JSON.parse(localStorage.getItem(k)); return v && (v.s === 1 || v.s === -1) ? v : null; } catch (e) { return null; } };
 
 export class Imu {
-  constructor() { this.on = false; this.last = 0; this.cnt = 0; this.hz = 0; this.denied = false; this.reset(); }
+  constructor(store = 'imu.cal') {
+    this.on = false; this.last = 0; this.cnt = 0; this.hz = 0; this.denied = false; this.store = store;
+    this.saved = loadCal(store); this.reset();
+  }
+
+  // ---- 저장된 자이로 보정 (회전 부호·치우침·자이로 좌표 부호): 폰 자세와 무관해 다음 실행에도 그대로 씀 ----
+  saveCal(bg) {
+    const s = this.sign(); if (!s || this.nW < NEED_W) return false;
+    this.saved = { s, bg, gs: this.ge && this.ge[0] > this.ge[1] ? -1 : 1, at: Date.now() };
+    try { localStorage.setItem(this.store, JSON.stringify(this.saved)); } catch (e) {}
+    return true;
+  }
+  // 저장 위치 전환 (실제 센서 / 시뮬레이션 따로)
+  useStore(key) { this.store = key; this.saved = loadCal(key); }
+  clearCal() { this.saved = null; try { localStorage.removeItem(this.store); } catch (e) {} }
 
   reset(note = '') {
     Object.assign(this, {
@@ -32,7 +47,7 @@ export class Imu {
     // 중력 방향: 상보 필터 — 자이로로 폰 회전을 따라가고(g ← g + (g×ω)dt), 가속도계로 천천히 보정.
     // 손에 든 폰처럼 자세가 계속 바뀌어도 '위쪽'을 놓치지 않음.
     // 기기마다 자이로 좌표 부호가 다를 수 있어 +ω, −ω 두 후보를 함께 돌리고 가속도계와 더 잘 맞는 쪽을 씀.
-    if (!this.gc) { this.gc = [aig.slice(), aig.slice()]; this.ge = [0, 0]; }
+    if (!this.gc) { this.gc = [aig.slice(), aig.slice()]; this.ge = this.saved && this.saved.gs === -1 ? [0.3, 0] : [0, this.saved ? 0.3 : 0]; }
     else {
       this.gc = this.gc.map((g, c) => {
         const sg = c ? -1 : 1, [gx, gy, gz] = g, [wx, wy, wz] = rot.map(v => v * sg * dt);
@@ -92,16 +107,19 @@ export class Imu {
   corr() { return this.Srr > 1e-4 && this.Spp > 1e-4 ? this.Srp / Math.sqrt(this.Srr * this.Spp) : 0; }
   // 정지 판정 보조: 수평 가속과 회전이 거의 없음
   still() { return this.fresh() && Math.hypot(...this.hLP) < 0.35 && Math.abs(this.rLP) < 0.03; }
-  sign() { const c = this.corr(); return Math.abs(c) > 0.6 ? Math.sign(c) : 0; }
+  learnedSign() { const c = this.corr(); return Math.abs(c) > 0.6 ? Math.sign(c) : 0; }
+  // 이번 실행에서 확정한 부호가 있으면 그것, 없으면 저장된 부호
+  sign() { return this.learnedSign() || (this.saved ? this.saved.s : 0); }
+  gyroReady() { return (this.nW >= NEED_W && !!this.learnedSign()) || !!this.saved; }
   fresh() { return this.on && Date.now() - this.last < 2000; }
-  ready() { return this.nA >= NEED_A && this.nW >= NEED_W; }
-  progress() { return Math.min(this.nA, NEED_A) + Math.min(this.nW, NEED_W); }
+  ready() { return this.nA >= NEED_A && this.gyroReady(); }
+  progress() { return Math.min(this.nA, NEED_A) + (this.gyroReady() ? NEED_W : Math.min(this.nW, NEED_W)); }
   get total() { return NEED_A + NEED_W; }
 
   // 칼만 예측에 넣을 입력
   input() {
     const fr = this.fresh(), s = this.sign();
-    const okA = fr && this.nA >= NEED_A && !!this.f, okW = fr && this.nW >= NEED_W && s !== 0;
+    const okA = fr && this.nA >= NEED_A && !!this.f, okW = fr && this.gyroReady() && s !== 0;
     return { a: okA ? clamp(dot(this.f, [...this.hLP, 1]), -5, 5) : 0, r: this.rLP, s, okA, okW };
   }
 }

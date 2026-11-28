@@ -15,7 +15,7 @@ const ROUTE = [
 const LOOP = ROUTE.reduce((s, p) => s + p[0], 0);
 
 export class Sim {
-  constructor(onGps, onImu, opt = {}) { this.onGps = onGps; this.onImu = onImu; this.timer = null; this.hand = !!opt.hand; }
+  constructor(onGps, onImu, opt = {}) { this.onGps = onGps; this.onImu = onImu; this.timer = null; this.hand = !!opt.hand; this.coarse = !!opt.coarse; }
 
   start() {
     this.T = { lat: 37.5547, lon: 126.9707, v: 0, psi: rad(35) };
@@ -60,7 +60,11 @@ export class Sim {
     this.onImu(toDev([lin[0], lin[1], lin[2] + 9.81]), toDev(lin), gyro, dt);
 
     // GPS 1 Hz
-    if (now >= this.nextFix) {
+    if (now >= this.nextFix && this.coarse) {          // 위성 GPS 없음: Wi‑Fi·기지국 대략 위치 8초마다
+      this.nextFix += 8000;
+      const n = 120 / 111320;
+      this.onGps({ t: now, lat: T.lat + gauss(n), lon: T.lon + gauss(n / Math.cos(p2)), acc: 150, alt: null, spd: null, hdg: null });
+    } else if (now >= this.nextFix) {
       this.nextFix += 1000;
       const n = 3.5 / 111320;
       this.onGps({

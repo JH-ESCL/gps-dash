@@ -11,13 +11,14 @@ const MAX_HIST = 20000;
 
 const kf = new EKF(), imu = new Imu();
 let H, ref, prevG, lastFixT, lastRawT, gpsIv, lastKfT, lastImuT;
+let lastCalT = 0;
 let mode = null;           // null | 'real' | 'sim'
 let watchId = null, sim = null, wake = null, blocked = false, follow = true, winSec = 300;
 
 function resetHist() {
   H = { gps: [], kf: [], err: [], imu: [], gacc: [], gyaw: [], gain: [] };
   ref = null; prevG = null; lastFixT = 0; lastRawT = 0; gpsIv = []; lastKfT = 0; lastImuT = 0;
-  kf.x = null; imu.reset();
+  kf.x = null; imu.reset(); kf.cal = imu.saved;
 }
 const fro = A => Math.sqrt(A.reduce((s, r) => s + r.reduce((t, v) => t + v * v, 0), 0));
 const push = (arr, v) => { arr.push(v); if (arr.length > MAX_HIST) arr.splice(0, arr.length - MAX_HIST); };
@@ -75,6 +76,10 @@ setInterval(() => {
     const [la, lo] = kf.ll();
     push(H.kf, { t: now, lat: la, lon: lo, v: kf.x[2], psi: deg(kf.x[3]), sv: Math.sqrt(kf.P[2][2]), sp: deg(Math.sqrt(kf.P[3][3])), sig: kf.sigma(), pn: fro(kf.P), out });
   }
+  // 위성 GPS로 회전 보정이 확정되면 30초마다 저장 (치우침은 필터 추정값)
+  if (!out && imu.learnedSign() && imu.nW >= 6 && now - lastCalT > 30000 && Math.sqrt(kf.P[4][4]) < 0.003) {
+    lastCalT = now; if (imu.saveCal(kf.x[4])) kf.cal = imu.saved;
+  }
   if (now - lastImuT >= 200 && imu.fresh()) {
     lastImuT = now;
     push(H.imu, { t: now, a: u.okA ? u.a : null, w: u.okW ? deg(u.s * u.r - kf.x[4]) : null,
@@ -84,7 +89,7 @@ setInterval(() => {
 
 /* ---------- 시작/정지 ---------- */
 function startReal() {
-  stopAll(); resetHist(); mode = 'real';
+  stopAll(); imu.useStore('imu.cal'); resetHist(); mode = 'real';
   bindDeviceMotion(imu, () => mode !== 'real');
   if (!('geolocation' in navigator) || !isSecureContext) { msg('위치 기능은 https 주소에서만 동작해요.'); }
   else watchId = navigator.geolocation.watchPosition(p => {
@@ -100,7 +105,7 @@ function startReal() {
   keepAwake(true); msg('위성 찾는 중… 창가나 실외에서 더 빨라요.');
 }
 function startSim() {
-  stopAll(); resetHist(); mode = 'sim';
+  stopAll(); imu.useStore('imu.cal.sim'); resetHist(); mode = 'sim';
   sim = new Sim(onGps, (a, l, r, dt) => imu.sample(a, l, r, dt));
   sim.start(); window.__sim = sim; window.__kf = kf; window.__imu = imu;
   msg('시뮬레이션 주행 중 — "GPS 차단"을 눌러 관성 추정을 확인해 보세요.');
@@ -119,6 +124,7 @@ $('go').onclick = () => (mode === 'real' ? (stopAll(), msg('정지했어요. 기
 $('sim').onclick = () => (mode === 'sim' ? (stopAll(), msg('시뮬레이션을 멈췄어요.')) : startSim());
 $('blk').onclick = () => { if (!mode) return msg('먼저 시작하거나 시뮬레이션을 켜 주세요.'); blocked = !blocked; msg(blocked ? 'GPS 차단: 필터는 IMU로만 추정하고, 실제 GPS는 회색 점(정답)으로만 표시해요.' : 'GPS 차단 해제'); };
 $('csv').onclick = saveCsv;
+$('calClr').onclick = () => { imu.clearCal(); kf.cal = null; calKey = ''; msg('저장된 IMU 회전 보정을 지웠어요. 다음 실행부터 새로 학습해요.'); };
 $('rst').onclick = () => {
   resetHist(); blocked = false;
   msg(mode ? '필터·IMU 정렬·기록을 초기화했어요. 다음 GPS 수신부터 새로 시작해요.' : '필터와 기록을 초기화했어요.');
@@ -133,7 +139,7 @@ function saveCsv() {
   if (!H.gps.length) return msg('저장할 기록이 없어요.');
   const rows = ['type,t_ms,lat,lon,speed_mps,heading_deg,acc_or_sigma_m,flag,imu_a_est_mps2,imu_yaw_est_dps,imu_h_raw_mps2,imu_yaw_raw_dps,imu_hz,align_a,align_w,yaw_sign,gyro_bias_dps,acc_x,acc_y,acc_z,gyr_x_rads,gyr_y_rads,gyr_z_rads,gyro_prop_sign'];
   const ua = navigator.userAgent.replace(/[,;\n]/g, ' ');
-  rows.push(['meta', H.gps[0].t, '', '', '', '', '', `app_version=${VERSION};build=${BUILD};mode=${mode || 'stopped'};ua=${ua}`].join(','));
+  rows.push(['meta', H.gps[0].t, '', '', '', '', '', `app_version=${VERSION};build=${BUILD};mode=${mode || 'stopped'};saved_cal=${imu.saved ? `s${imu.saved.s}_bg${imu.saved.bg.toFixed(5)}` : 'none'};ua=${ua}`].join(','));
   H.gps.forEach(p => rows.push(['gps', p.t, p.lat, p.lon, p.spd ?? '', p.hdg ?? '', p.acc, p.blocked ? 'blocked' : p.rejected ? 'rejected' : p.still ? 'still' : p.dup ? 'dup' : ''].join(',')));
   H.kf.forEach(p => rows.push(['kf', p.t, p.lat.toFixed(7), p.lon.toFixed(7), p.v.toFixed(3), p.v > 1.5 && p.sp <= 30 ? p.psi.toFixed(2) : '', p.sig.toFixed(2), [p.out ? 'imu_only' : '', p.v > 1.5 && p.sp <= 30 ? '' : 'heading_na'].filter(Boolean).join('|')].join(',')));
   H.imu.forEach(p => rows.push(['imu', p.t, '', '', '', '', '', '', p.a == null ? '' : p.a.toFixed(3), p.w == null ? '' : p.w.toFixed(3),
@@ -191,7 +197,8 @@ function render() {
   }
   if (imu.denied) chip('cImu', 'bad', 'IMU 권한 없음');
   else if (!imu.fresh()) chip('cImu', '', 'IMU 대기');
-  else chip('cImu', imu.ready() ? 'ok' : 'warn', imu.ready() ? `IMU ${imu.hz} Hz · 정렬 완료` : `IMU ${imu.hz} Hz · 정렬 ${imu.progress()}/${imu.total}`);
+  else chip('cImu', imu.ready() ? 'ok' : 'warn', imu.ready() ? `IMU ${imu.hz} Hz · 정렬 완료` : `IMU ${imu.hz} Hz · 정렬 ${imu.progress()}/${imu.total}${imu.saved && !imu.learnedSign() ? ' · 저장된 회전 보정 사용' : ''}`);
+  renderCal();
   if (!c) chip('cKf', '', '필터 대기');
   else chip('cKf', c.out ? 'warn' : 'ok', `${c.out ? 'IMU 추정' : 'GPS+IMU'} ±${fmtM(2 * c.sig)}`);
 
@@ -255,6 +262,17 @@ function render() {
   // 차단 중 실제 오차 요약
   const be = H.err.filter(p => p.blocked && p.t > now - 3000).pop();
   $('errNow').textContent = blocked && be ? `차단 중 실제 오차 ${fmtM(be.d)} · 필터 예상 ±${fmtM(2 * c.sig)}` : '';
+}
+
+/* ---------- 저장된 IMU 보정 ---------- */
+let calKey = '';
+function renderCal() {
+  const c = imu.saved, key = (c ? `${c.s}|${c.bg}|${c.at}` : 'none') + imu.store;
+  if (key === calKey) return; calKey = key;
+  $('calTxt').innerHTML = c
+    ? `<b>저장된 회전 보정${imu.store.endsWith('.sim') ? ' (시뮬레이션용)' : ''}</b> · 부호 ${c.s > 0 ? '+' : '−'} · 자이로 치우침 ${(c.bg * 180 / Math.PI).toFixed(3)}°/s · ${new Date(c.at).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} 저장<br><span>위성 GPS 없이도 처음부터 자이로로 커브를 따라가요.</span>`
+    : `<b>저장된 회전 보정 없음${imu.store.endsWith('.sim') ? ' (시뮬레이션용)' : ''}</b><br><span>위성 GPS가 잡힌 상태에서 커브를 몇 번 지나면 자동 저장돼요.</span>`;
+  $('calClr').hidden = !c;
 }
 
 /* ---------- 공분산·게인 노름 ---------- */

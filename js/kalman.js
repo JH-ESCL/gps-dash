@@ -47,12 +47,14 @@ export class EKF {
   ll() { return this.toLL(this.x[0], this.x[1]); }
 
   // keep=true: 위치만 GPS로 다시 잡고, 속력·방향·자이로 치우침은 이어받음(불확실도만 키움)
+  // cal: 저장된 자이로 치우침 {bg} — 처음부터 쓰되 약간의 불확실도를 둠
   init(f, keep = false) {
     const old = keep && this.x ? { x: this.x.slice(), P: this.P } : null;
     this.lat0 = f.lat; this.lon0 = f.lon; this.t = f.t; this.rej = 0;
     const moving = f.spd != null && f.spd > 1.5 && f.hdg != null;
     this.x = [0, 0, f.spd ?? 0, moving ? rad(f.hdg) : 0, 0]; this.gyroOn = false; this.last = null;
     this.P = M.diag([f.acc ** 2, f.acc ** 2, f.spd != null ? 1 : 25, moving ? rad(10) ** 2 : 10, rad(0.5) ** 2]);
+    if (!old && this.cal) { this.x[4] = this.cal.bg; this.P[4][4] = rad(0.15) ** 2; }
     if (old) {
       if (f.spd == null) { this.x[2] = old.x[2]; this.P[2][2] = old.P[2][2] + 9; }
       if (!moving) { this.x[3] = old.x[3]; this.P[3][3] = old.P[3][3] + rad(20) ** 2; }
