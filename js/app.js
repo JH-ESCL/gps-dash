@@ -11,7 +11,7 @@ const MAX_HIST = 20000;
 
 const kf = new EKF(), imu = new Imu();
 let H, ref, prevG, lastFixT, lastRawT, gpsIv, lastKfT, lastImuT;
-let lastCalT = 0;
+let lastCalT = 0, showMap = (() => { try { return localStorage.getItem('map') !== 'off'; } catch (e) { return true; } })();
 let mode = null;           // null | 'real' | 'sim'
 let watchId = null, sim = null, wake = null, blocked = false, follow = true, winSec = 300;
 
@@ -131,6 +131,8 @@ $('rst').onclick = () => {
 };
 $('fFollow').onclick = () => { follow = true; segOn('fFollow', 'fAll'); };
 $('fAll').onclick = () => { follow = false; segOn('fAll', 'fFollow'); };
+$('fMap').onclick = () => { showMap = !showMap; $('fMap').classList.toggle('on', showMap); try { localStorage.setItem('map', showMap ? 'on' : 'off'); } catch (e) {} };
+$('fMap').classList.toggle('on', showMap);
 for (const b of document.querySelectorAll('#win button')) b.onclick = () => { winSec = +b.dataset.w; document.querySelectorAll('#win button').forEach(x => x.classList.toggle('on', x === b)); };
 function segOn(a, b) { $(a).classList.add('on'); $(b).classList.remove('on'); }
 function msg(t) { $('msg').textContent = t; }
@@ -215,7 +217,7 @@ function render() {
   $('sim').textContent = mode === 'sim' ? '시뮬레이션 정지' : '시뮬레이션'; $('sim').classList.toggle('on', mode === 'sim');
 
   // 궤적
-  drawTrack($('cvTrack'), { ref, gps: H.gps, kf: H.kf, cur: c, follow });
+  drawTrack($('cvTrack'), { ref, gps: H.gps, kf: H.kf, cur: c, follow, map: showMap });
 
   // 시계열
   const t1 = mode ? now : (H.kf.length ? H.kf[H.kf.length - 1].t : now);

@@ -102,7 +102,7 @@ code{color:var(--ink)}
   </section>
 
   <section class="card">
-    <div class="ch"><h2>궤적</h2><div class="seg"><button id="fFollow" class="on">따라가기</button><button id="fAll">전체</button></div></div>
+    <div class="ch"><h2>궤적</h2><div style="display:flex;gap:6px"><div class="seg"><button id="fMap" title="온라인일 때 OpenStreetMap 지도 타일 표시">지도</button></div><div class="seg"><button id="fFollow" class="on">따라가기</button><button id="fAll">전체</button></div></div></div>
     <div class="fig track"><canvas id="cvTrack"></canvas></div>
     <div class="lg">
       <span><i class="dt" style="background:var(--gps)"></i>GPS 측정</span>
@@ -111,6 +111,7 @@ code{color:var(--ink)}
       <span><i class="ho"></i>차단 중 실제 GPS (정답)</span>
       <span><i class="dt" style="background:rgba(76,194,255,.35)"></i>불확실도 2σ</span>
     </div>
+    <div class="mcap">지도: 온라인이면 <a href="https://www.openstreetmap.org/copyright" style="color:var(--dim)">© OpenStreetMap</a> 타일(한 번 본 곳은 폰에 저장돼 오프라인에서도 보임), 없으면 내장 해안선·도시·주요 역(대략 위치)</div>
     <div id="errNow"></div>
   </section>
 

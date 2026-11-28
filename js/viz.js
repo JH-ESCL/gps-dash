@@ -1,3 +1,5 @@
+import { LAND, CITIES, STATIONS } from './basemap.js';
+
 // 캔버스 시각화: 시계열 차트 + 궤적 뷰 (외부 라이브러리 없이, 오프라인 동작)
 export const COL = {
   grid: '#1c2632', axis: '#2a3746', text: '#8796a8', kf: '#4cc2ff', band: 'rgba(76,194,255,.16)',
@@ -87,12 +89,99 @@ export function timeChart(cv, { t0, t1, series, outages = [], na = [], yMin, yMa
   g.strokeStyle = COL.axis; g.beginPath(); g.moveTo(L, T); g.lineTo(L, T + ph); g.lineTo(W - Rr, T + ph); g.stroke();
 }
 
-// 궤적: 지도 타일 없이 미터 단위 평면에 GPS 측정점과 칼만 추정 경로를 그림
-export function drawTrack(cv, { ref, gps, kf, cur, follow }) {
+// ---- 지도 바탕: 오프라인 해안선·지명 + (온라인이면) OpenStreetMap 타일 ----
+const tiles = new Map();   // "z/x/y" → { img, ok }
+let lastZ = null;
+function tile(z, x, y) {
+  const k = `${z}/${x}/${y}`; let t = tiles.get(k);
+  if (!t) {
+    if (tiles.size > 400) tiles.delete(tiles.keys().next().value);
+    const img = new Image(); img.crossOrigin = 'anonymous';
+    t = { img, ok: false }; img.onload = () => { t.ok = true; }; img.onerror = () => { t.err = Date.now(); };
+    img.src = `https://tile.openstreetmap.org/${k}.png`; tiles.set(k, t);
+  } else if (t.err && Date.now() - t.err > 15000) { tiles.delete(k); }   // 실패하면 잠시 뒤 다시 시도
+  return t;
+}
+const lon2x = (lon, z) => (lon + 180) / 360 * 2 ** z;
+const lat2y = (lat, z) => { const r = lat * Math.PI / 180; return (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * 2 ** z; };
+const x2lon = (x, z) => x / 2 ** z * 360 - 180;
+const y2lat = (y, z) => { const n = Math.PI - 2 * Math.PI * y / 2 ** z; return 180 / Math.PI * Math.atan(Math.sinh(n)); };
+
+function drawBase(g, W, H, ref, X, Y, P, span, useTiles) {
+  // 1) 오프라인 해안선
+  g.fillStyle = '#131b25'; g.strokeStyle = '#2b3b4e'; g.lineWidth = 1;
+  for (const poly of LAND) {
+    g.beginPath();
+    poly.forEach(([lo, la], i) => { const [x, y] = P(la, lo); i ? g.lineTo(X(x), Y(y)) : g.moveTo(X(x), Y(y)); });
+    g.closePath(); g.fill(); g.stroke();
+  }
+  // 2) 온라인 지도 타일 (받은 타일은 폰에 저장돼 오프라인에서도 보임)
+  let anyTile = false;
+  if (useTiles) {
+    const mpp = span / W, zf = Math.log2(156543 * Math.cos(ref.lat * Math.PI / 180) / mpp);
+    // 확대 단계가 경계에서 오락가락하지 않게 히스테리시스
+    if (lastZ == null || zf < lastZ - 0.2 || zf > lastZ + 1.2) lastZ = Math.floor(zf);
+    const z = Math.max(3, Math.min(17, lastZ));
+    const kx = 111320 * Math.cos(ref.lat * Math.PI / 180), ky = 110540;
+    const inv = (px, py) => [ref.lat + (py) / ky, ref.lon + (px) / kx];   // 미터 → 위경도
+    const [la0, lo0] = inv(Xi(0), Yi(H)), [la1, lo1] = inv(Xi(W), Yi(0));
+    function Xi(sx) { return (sx - X(0)) / (X(1) - X(0)); }
+    function Yi(sy) { return (sy - Y(0)) / (Y(1) - Y(0)); }
+    const tx0 = Math.floor(lon2x(lo0, z)), tx1 = Math.floor(lon2x(lo1, z)), ty0 = Math.floor(lat2y(la1, z)), ty1 = Math.floor(lat2y(la0, z));
+    if ((tx1 - tx0 + 1) * (ty1 - ty0 + 1) <= 48) {
+      g.save(); g.globalAlpha = 0.55;
+      for (let tx = tx0; tx <= tx1; tx++) for (let ty = ty0; ty <= ty1; ty++) {
+        const [ax, ay] = P(y2lat(ty, z), x2lon(tx, z)), [bx, by] = P(y2lat(ty + 1, z), x2lon(tx + 1, z));
+        const dx = X(ax), dy = Y(ay), dw = X(bx) - X(ax) + 0.5, dh = Y(by) - Y(ay) + 0.5;
+        const t = tile(z, tx, ty);
+        if (t.ok) { g.drawImage(t.img, dx, dy, dw, dh); anyTile = true; continue; }
+        // 아직 안 받은 타일: 이미 받은 하위(더 자세한) 타일 4장이나 상위 타일 일부로 임시로 그림
+        const kids = [0, 1, 2, 3].map(i => tiles.get(`${z + 1}/${2 * tx + (i & 1)}/${2 * ty + (i >> 1)}`));
+        if (kids.every(k => k && k.ok)) {
+          kids.forEach((k, i) => g.drawImage(k.img, dx + (i & 1) * dw / 2, dy + (i >> 1) * dh / 2, dw / 2 + 0.5, dh / 2 + 0.5));
+          anyTile = true; continue;
+        }
+        for (let up = 1; up <= 3 && z - up >= 0; up++) {
+          const pt = tiles.get(`${z - up}/${tx >> up}/${ty >> up}`);
+          if (pt && pt.ok) {
+            const n = 1 << up, sw = 256 / n;
+            g.drawImage(pt.img, (tx % n) * sw, (ty % n) * sw, sw, sw, dx, dy, dw, dh); anyTile = true; break;
+          }
+        }
+      }
+      g.restore();
+      if (anyTile) { g.fillStyle = 'rgba(10,13,18,.35)'; g.fillRect(0, 0, W, H); }
+    }
+  }
+  // 3) 지명: 축척에 따라 큰 도시부터
+  const maxRank = span > 300000 ? 4 : span > 80000 ? 7 : 9;
+  g.font = '600 12px system-ui,sans-serif'; g.textAlign = 'left'; g.textBaseline = 'middle';
+  const boxes = [];
+  const label = (name, la, lo, color, dot) => {
+    const [x, y] = P(la, lo), sx = X(x), sy = Y(y);
+    if (sx < -50 || sx > W + 50 || sy < -20 || sy > H + 20) return;
+    const w = g.measureText(name).width, bx = [sx + 5, sy - 8, sx + 9 + w, sy + 8];
+    if (boxes.some(o => bx[0] < o[2] && bx[2] > o[0] && bx[1] < o[3] && bx[3] > o[1])) return;
+    boxes.push(bx);
+    g.fillStyle = color; g.beginPath(); g.arc(sx, sy, dot, 0, 7); g.fill();
+    g.strokeStyle = 'rgba(10,13,18,.85)'; g.lineWidth = 3; g.strokeText(name, sx + 7, sy); g.fillText(name, sx + 7, sy);
+  };
+  [...CITIES].sort((a, b) => a[3] - b[3]).forEach(([n, la, lo, r]) => { if (r <= maxRank) label(n, la, lo, '#c7d2de', r <= 4 ? 3 : 2.2); });
+  if (span < 80000) STATIONS.forEach(([n, la, lo]) => label(n, la, lo, '#ffb84d', 2.5));
+  return anyTile;
+}
+
+// 궤적: 미터 단위 평면에 지도 바탕 + GPS 측정점과 칼만 추정 경로를 그림
+export function drawTrack(cv, { ref, gps, kf, cur, follow, map = true }) {
   const [g, W, H] = setup(cv);
-  if (!ref) {
-    g.fillStyle = COL.text; g.textAlign = 'center'; g.font = '13px system-ui,sans-serif';
-    g.fillText('시작하거나 시뮬레이션을 켜면 궤적이 그려져요', W / 2, H / 2); return;
+  if (!ref) {   // 시작 전: 한반도 전체 지도
+    const r0 = { lat: 36.2, lon: 127.8 }, k0 = 111320 * Math.cos(r0.lat * Math.PI / 180), sp = Math.max(700000, 700000 * W / H * 0.8);
+    const P0 = (la, lo) => [(lo - r0.lon) * k0, (la - r0.lat) * 110540], s0 = W / sp;
+    drawBase(g, W, H, r0, x => W / 2 + x * s0, y => H / 2 - y * s0, P0, sp, map);
+    g.fillStyle = COL.ink || '#e8eef5'; g.textAlign = 'center'; g.font = '600 13px system-ui,sans-serif';
+    g.strokeStyle = 'rgba(10,13,18,.9)'; g.lineWidth = 4;
+    const m = '시작하거나 시뮬레이션을 켜면 궤적이 그려져요';
+    g.strokeText(m, W / 2, H - 22); g.fillText(m, W / 2, H - 22); return;
   }
   const kx = 111320 * Math.cos(ref.lat * Math.PI / 180), ky = 110540;
   const P = (la, lo) => [(lo - ref.lon) * kx, (la - ref.lat) * ky];
@@ -107,6 +196,7 @@ export function drawTrack(cv, { ref, gps, kf, cur, follow }) {
     cx = (a + b) / 2; cy = (c + d) / 2; span = Math.max(200, (b - a) * 1.15, (d - c) * 1.15 * W / H);
   }
   const s = W / span, X = x => W / 2 + (x - cx) * s, Y = y => H / 2 - (y - cy) * s;
+  const anyTile = drawBase(g, W, H, ref, X, Y, P, span, map);
 
   // 격자 + 축척
   const step = niceStep(span, 5);
@@ -165,4 +255,6 @@ export function drawTrack(cv, { ref, gps, kf, cur, follow }) {
     }
     g.restore();
   }
+  g.font = '10px system-ui,sans-serif'; g.textAlign = 'right'; g.textBaseline = 'bottom'; g.fillStyle = '#8796a8';
+  g.fillText(anyTile ? '© OpenStreetMap contributors' : '해안선 © Natural Earth', W - 6, H - 4);
 }
