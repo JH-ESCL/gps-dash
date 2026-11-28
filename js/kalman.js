@@ -62,6 +62,17 @@ export class EKF {
     }
   }
 
+  // 나침반 등 방향만의 보정 (psi, sd: rad). 3σ 밖이면 버림. GPS 게인 표시(last)는 건드리지 않음
+  updateHeading(psi, sd) {
+    if (!this.x) return false;
+    const y = wrapPi(psi - this.x[3]), S = this.P[3][3] + sd * sd;
+    if (y * y > 9 * S) return false;
+    const keep = this.last;
+    this._update([psi], [[0, 0, 0, 1, 0]], [sd * sd], 0, ['ψ']);
+    this.lastCompass = this.last; this.last = keep;
+    return true;
+  }
+
   // 위치 불확실도 (1σ, m)
   sigma() { return this.x ? Math.sqrt(this.P[0][0] + this.P[1][1]) : Infinity; }
 

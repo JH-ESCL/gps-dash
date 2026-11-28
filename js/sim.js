@@ -15,7 +15,7 @@ const ROUTE = [
 const LOOP = ROUTE.reduce((s, p) => s + p[0], 0);
 
 export class Sim {
-  constructor(onGps, onImu, opt = {}) { this.onGps = onGps; this.onImu = onImu; this.timer = null; this.hand = !!opt.hand; this.coarse = !!opt.coarse; }
+  constructor(onGps, onImu, opt = {}) { this.onGps = onGps; this.onImu = onImu; this.timer = null; this.hand = !!opt.hand; this.coarse = !!opt.coarse; this.onCompass = opt.onCompass || null; this.magDisturb = opt.magDisturb !== false; }
 
   start() {
     this.T = { lat: 37.5547, lon: 126.9707, v: 0, psi: rad(35) };
@@ -60,6 +60,13 @@ export class Sim {
     // 브라우저 원시 형식(표준)으로: [alpha=z, beta=x, gamma=y]
     this.onImu(toDev([lin[0], lin[1], lin[2] + 9.81]), toDev(lin), [gyro[2], gyro[0], gyro[1]], dt);
 
+    // 나침반 10 Hz: 폰 방향 = 진행 방향 + 거치 각도(35°) − 편각(8.5°) + 잡음, 가끔 자기 교란(±35°, 6초)
+    if (this.onCompass && now - (this.lastMag || 0) >= 100) {
+      this.lastMag = now;
+      let d = 0;
+      if (this.magDisturb) { const ph = ts % 45; if (ph > 38) d = 35 * Math.sin((ph - 38) / 7 * Math.PI); }
+      this.onCompass(((deg(T.psi) - 35 + 8.5 + d + gauss(4)) % 360 + 360) % 360);
+    }
     // GPS 1 Hz
     if (now >= this.nextFix && this.coarse) {          // 위성 GPS 없음: Wi‑Fi·기지국 대략 위치 8초마다
       this.nextFix += 8000;

@@ -2,6 +2,7 @@
 import { EKF, rad, deg, wrapPi, hav } from './kalman.js';
 import { Imu, bindDeviceMotion, GYRO_MAPS } from './imu.js';
 import { Sim } from './sim.js';
+import { Compass, bindCompass } from './compass.js';
 import { timeChart, drawTrack, COL } from './viz.js';
 import { VERSION, BUILD } from './version.js';
 
@@ -9,7 +10,8 @@ const $ = id => document.getElementById(id);
 const OUT_MS = 2500;       // 이 시간 동안 GPS 보정이 없으면 '관성 추정' 구간
 const MAX_HIST = 20000;
 
-const kf = new EKF(), imu = new Imu();
+const kf = new EKF(), imu = new Imu(), compass = new Compass();
+let lastGpsHdgT = 0, lastCompT = 0, lastCompUsedT = 0, yawInt = 0, yawHist = [], lastLoopT = 0;
 let H, ref, prevG, lastFixT, lastRawT, gpsIv, lastKfT, lastImuT;
 let yawWin = null, lastCalT = 0, showMap = (() => { try { return localStorage.getItem('map') !== 'off'; } catch (e) { return true; } })();
 let mode = null;           // null | 'real' | 'sim'
@@ -18,7 +20,7 @@ let watchId = null, sim = null, wake = null, blocked = false, follow = true, win
 function resetHist() {
   H = { gps: [], kf: [], err: [], imu: [], gacc: [], gyaw: [], gain: [] };
   ref = null; prevG = null; yawWin = null; lastFixT = 0; lastRawT = 0; gpsIv = []; lastKfT = 0; lastImuT = 0;
-  kf.x = null; imu.reset(); kf.cal = imu.saved;
+  kf.x = null; imu.reset(); kf.cal = imu.saved; compass.reset(); lastGpsHdgT = lastCompUsedT = 0; yawHist = []; H.cmp = [];
 }
 const fro = A => Math.sqrt(A.reduce((s, r) => s + r.reduce((t, v) => t + v * v, 0), 0));
 const push = (arr, v) => { arr.push(v); if (arr.length > MAX_HIST) arr.splice(0, arr.length - MAX_HIST); };
@@ -50,6 +52,9 @@ function onGps(f) {
     push(H.gain, { t: f.t, kn: fro(L.Kn) });
   }
   lastFixT = f.t;
+  // 나침반: GPS 방향을 필터가 썼으면 기록, 위성 GPS 진행 방향이 믿을 만하면 '폰 방향↔진행 방향' 오프셋 학습
+  if (f.hdg != null && (f.spd ?? kf.x[2]) > 1.5) lastGpsHdgT = f.t;
+  if (f.hdg != null && f.spd != null && f.spd > 3 && f.acc <= 20) compass.learn(f.hdg);
 
   // IMU 정렬 학습
   // (1) 진행방향 가속: GPS 1~3초 간격 속력 변화와 IMU 수평가속을 짝지음
@@ -80,10 +85,25 @@ setInterval(() => {
   const u = imu.input();
   kf.predict(now, u);
   const out = now - lastFixT > OUT_MS;
+  // 자이로 누적 회전(나침반 교란 감지용)
+  const dl = lastLoopT ? (now - lastLoopT) / 1000 : 0; lastLoopT = now;
+  if (u.okW) yawInt += deg(u.s * u.r - kf.x[4]) * dl;
+  yawHist.push([now, yawInt]); while (yawHist.length && yawHist[0][0] < now - 3000) yawHist.shift();
+  const y0 = yawHist.find(p => p[0] >= now - 2000);
+  compass.checkDisturb(u.okW && y0 ? yawInt - y0[1] : null);
+  // 나침반 보정: GPS 방향이 없을 때(끊김·정지·대략 위치)만 0.5초마다
+  if (now - lastCompT >= 500) {
+    lastCompT = now;
+    const m = compass.measurement(u.okW), gpsHdg = now - lastGpsHdgT < 3000;
+    let used = false;
+    if (m && !gpsHdg) used = kf.updateHeading(rad(m.hdg), rad(m.sd));
+    if (used) lastCompUsedT = now;
+    if (m) push(H.cmp, [now, m.hdg, used]);
+  }
   if (now - lastKfT >= 500) {
     lastKfT = now;
     const [la, lo] = kf.ll();
-    push(H.kf, { t: now, lat: la, lon: lo, v: kf.x[2], psi: deg(kf.x[3]), sv: Math.sqrt(kf.P[2][2]), sp: deg(Math.sqrt(kf.P[3][3])), sig: kf.sigma(), pn: fro(kf.P), out });
+    push(H.kf, { t: now, lat: la, lon: lo, v: kf.x[2], psi: deg(kf.x[3]), sv: Math.sqrt(kf.P[2][2]), sp: deg(Math.sqrt(kf.P[3][3])), sig: kf.sigma(), pn: fro(kf.P), out, cmp: now - lastCompUsedT < 2000 });
   }
   // 위성 GPS로 회전 보정이 확정되면 30초마다 저장 (치우침은 필터 추정값)
   if (!out && imu.learnedSign() && imu.gyroReady() && now - lastCalT > 30000 && Math.sqrt(kf.P[4][4]) < 0.003) {
@@ -92,7 +112,8 @@ setInterval(() => {
   if (now - lastImuT >= 200 && imu.fresh()) {
     lastImuT = now;
     push(H.imu, { t: now, a: u.okA ? u.a : null, w: u.okW ? deg(u.s * u.r - kf.x[4]) : null,
-      h: Math.hypot(...imu.hLP), r: deg(imu.rLP), hz: imu.hz, nA: imu.nA, nW: imu.nW, s: imu.sign(), bg: deg(kf.x[4]), raw: imu.takeRaw(), map: imu.map });
+      h: Math.hypot(...imu.hLP), r: deg(imu.rLP), hz: imu.hz, nA: imu.nA, nW: imu.nW, s: imu.sign(), bg: deg(kf.x[4]), raw: imu.takeRaw(), map: imu.map,
+      cmp: compass.fresh() ? compass.hdg : null, off: compass.offset, cst: compassState() });
   }
 }, 100);
 
@@ -100,6 +121,7 @@ setInterval(() => {
 function startReal() {
   stopAll(); imu.useStore('imu.cal'); resetHist(); mode = 'real';
   bindDeviceMotion(imu, () => mode !== 'real');
+  bindCompass(compass, () => mode !== 'real');
   if (!('geolocation' in navigator) || !isSecureContext) { msg('위치 기능은 https 주소에서만 동작해요.'); }
   else watchId = navigator.geolocation.watchPosition(p => {
     const c = p.coords;
@@ -115,7 +137,7 @@ function startReal() {
 }
 function startSim() {
   stopAll(); imu.useStore('imu.cal.sim'); resetHist(); mode = 'sim';
-  sim = new Sim(onGps, (a, l, r, dt) => imu.sample(a, l, r, dt));
+  sim = new Sim(onGps, (a, l, r, dt) => imu.sample(a, l, r, dt), { onCompass: h => { compass.src = 'sim'; compass.fromIOS(h); } });
   sim.start(); window.__sim = sim; window.__kf = kf; window.__imu = imu;
   msg('시뮬레이션 주행 중 — "GPS 차단"을 눌러 관성 추정을 확인해 보세요.');
 }
@@ -148,13 +170,14 @@ function msg(t) { $('msg').textContent = t; }
 
 function saveCsv() {
   if (!H.gps.length) return msg('저장할 기록이 없어요.');
-  const rows = ['type,t_ms,lat,lon,speed_mps,heading_deg,acc_or_sigma_m,flag,imu_a_est_mps2,imu_yaw_est_dps,imu_h_raw_mps2,imu_yaw_raw_dps,imu_hz,align_a,align_w,yaw_sign,gyro_bias_dps,acc_x,acc_y,acc_z,gyr_alpha_rads,gyr_beta_rads,gyr_gamma_rads,gyro_map'];
+  const rows = ['type,t_ms,lat,lon,speed_mps,heading_deg,acc_or_sigma_m,flag,imu_a_est_mps2,imu_yaw_est_dps,imu_h_raw_mps2,imu_yaw_raw_dps,imu_hz,align_a,align_w,yaw_sign,gyro_bias_dps,acc_x,acc_y,acc_z,gyr_alpha_rads,gyr_beta_rads,gyr_gamma_rads,gyro_map,compass_deg,compass_offset_deg,compass_state'];
   const ua = navigator.userAgent.replace(/[,;\n]/g, ' ');
   rows.push(['meta', H.gps[0].t, '', '', '', '', '', `app_version=${VERSION};build=${BUILD};mode=${mode || 'stopped'};saved_cal=${imu.saved ? `s${imu.saved.s}_bg${imu.saved.bg.toFixed(5)}_map${imu.saved.map}` : 'none'};gyro_map=${imu.map};ua=${ua}`].join(','));
   H.gps.forEach(p => rows.push(['gps', p.t, p.lat, p.lon, p.spd ?? '', p.hdg ?? '', p.acc, p.blocked ? 'blocked' : p.rejected ? 'rejected' : p.still ? 'still' : p.dup ? 'dup' : ''].join(',')));
-  H.kf.forEach(p => rows.push(['kf', p.t, p.lat.toFixed(7), p.lon.toFixed(7), p.v.toFixed(3), p.v > 1.5 && p.sp <= 30 ? p.psi.toFixed(2) : '', p.sig.toFixed(2), [p.out ? 'imu_only' : '', p.v > 1.5 && p.sp <= 30 ? '' : 'heading_na'].filter(Boolean).join('|')].join(',')));
+  H.kf.forEach(p => rows.push(['kf', p.t, p.lat.toFixed(7), p.lon.toFixed(7), p.v.toFixed(3), (p.v > 1.5 || p.cmp) && p.sp <= 30 ? p.psi.toFixed(2) : '', p.sig.toFixed(2), [p.out ? 'imu_only' : '', (p.v > 1.5 || p.cmp) && p.sp <= 30 ? '' : 'heading_na', p.cmp ? 'compass' : ''].filter(Boolean).join('|')].join(',')));
   H.imu.forEach(p => rows.push(['imu', p.t, '', '', '', '', '', '', p.a == null ? '' : p.a.toFixed(3), p.w == null ? '' : p.w.toFixed(3),
-    p.h.toFixed(3), p.r.toFixed(3), p.hz, p.nA, p.nW, p.s, p.bg.toFixed(4), ...(p.raw ? p.raw.map(v => v.toFixed(4)) : ['', '', '', '', '', '']), p.map].join(',')));
+    p.h.toFixed(3), p.r.toFixed(3), p.hz, p.nA, p.nW, p.s, p.bg.toFixed(4), ...(p.raw ? p.raw.map(v => v.toFixed(4)) : ['', '', '', '', '', '']), p.map,
+    p.cmp == null ? '' : p.cmp.toFixed(1), p.off == null ? '' : p.off.toFixed(1), p.cst].join(',')));
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([rows.join('\n')], { type: 'text/csv' }));
   a.download = `kf-log-v${VERSION}-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}.csv`;
@@ -173,10 +196,11 @@ function estState(c) {
   if (!kf.x) { const w = mode === 'real' ? 'GPS 기다리는 중' : '시작 중'; return { pos: false, hdg: false, why: w, hdgWhy: w }; }
   if (!c) return { pos: false, hdg: false, why: '정지됨', hdgWhy: '정지됨' };
   if (c.sig > 5000) return { pos: false, hdg: false, why: 'GPS 끊긴 지 오래돼 추정 중단', hdgWhy: 'GPS 끊긴 지 오래돼 추정 중단' };
-  if (c.v <= 1.5) return { pos: true, hdg: false, hdgWhy: '정지·저속 — 움직여야 알 수 있어요' };
+  const viaCompass = Date.now() - lastCompUsedT < 2000;
+  if (c.v <= 1.5 && !viaCompass) return { pos: true, hdg: false, hdgWhy: compass.fresh() && !compass.aligned() ? '정지·저속 — 나침반은 위성 GPS로 주행하며 정렬돼야 써요' : '정지·저속 — 움직여야 알 수 있어요' };
   const sp = deg(Math.sqrt(kf.P[3][3]));
   if (sp > 30) return { pos: true, hdg: false, hdgWhy: `불확실도가 너무 큼 (±${Math.round(2 * sp)}°)` };
-  return { pos: true, hdg: true };
+  return { pos: true, hdg: true, viaCompass };
 }
 function setRo(k, ok, val, sub, html) {
   const card = $('r' + k).closest('.r');
@@ -189,7 +213,7 @@ function setRo(k, ok, val, sub, html) {
 function current() {
   if (!kf.x || !mode) return null;
   const [lat, lon] = kf.ll();
-  const hdgOk = kf.x[2] > 1.5 && deg(Math.sqrt(kf.P[3][3])) <= 30;
+  const hdgOk = (kf.x[2] > 1.5 || Date.now() - lastCompUsedT < 2000) && deg(Math.sqrt(kf.P[3][3])) <= 30;
   return { lat, lon, v: kf.x[2], psi: deg(kf.x[3]), sig: kf.sigma(), out: Date.now() - lastFixT > OUT_MS, hdgOk };
 }
 
@@ -209,6 +233,9 @@ function render() {
   if (imu.denied) chip('cImu', 'bad', 'IMU 권한 없음');
   else if (!imu.fresh()) chip('cImu', '', 'IMU 대기');
   else chip('cImu', imu.ready() ? 'ok' : 'warn', imu.ready() ? `IMU ${imu.hz} Hz · 정렬 완료` : `IMU ${imu.hz} Hz · 정렬 ${imu.progress()}/${imu.total}${imu.saved && !imu.learnedSign() ? ' · 저장된 회전 보정 사용' : ''}`);
+  const cs = compassState();
+  chip('cCmp', cs === 'used' ? 'ok' : cs === 'aligned' ? 'ok' : cs === 'disturbed' ? 'bad' : cs === 'aligning' ? 'warn' : '',
+    { off: '나침반 꺼짐', none: '나침반 없음', denied: '나침반 권한 없음', aligning: `나침반 정렬 ${Math.min(compass.n, 10)}/10`, aligned: `나침반 대기 (GPS 방향 사용 중)`, used: '나침반 사용 중', disturbed: '나침반 자기 교란' }[cs]);
   renderCal();
   if (!c) chip('cKf', '', '필터 대기');
   else chip('cKf', c.out ? 'warn' : 'ok', `${c.out ? 'IMU 추정' : 'GPS+IMU'} ±${fmtM(2 * c.sig)}`);
@@ -216,7 +243,7 @@ function render() {
   // 숫자 — 추정할 수 없으면 '추정 불가'와 이유를 표시
   const st = estState(c);
   setRo('V', st.pos, st.pos ? Math.round(c.v * 3.6) : '', st.pos ? `±${(2 * Math.sqrt(kf.P[2][2]) * 3.6).toFixed(1)} km/h` : st.why);
-  setRo('H', st.hdg, st.hdg ? Math.round(c.psi) : '', st.hdg ? `${DIRS[Math.round(c.psi / 22.5) % 16]} · ±${Math.round(2 * deg(Math.sqrt(kf.P[3][3])))}°` : st.hdgWhy);
+  setRo('H', st.hdg, st.hdg ? Math.round(c.psi) : '', st.hdg ? `${DIRS[Math.round(c.psi / 22.5) % 16]} · ±${Math.round(2 * deg(Math.sqrt(kf.P[3][3])))}°${st.viaCompass ? ' · 나침반' : ''}` : st.hdgWhy);
   setRo('P', st.pos, st.pos ? `${c.lat.toFixed(5)}<br>${c.lon.toFixed(5)}` : '', st.pos ? `±${fmtM(2 * c.sig)} (95%)` : st.why, true);
   $('needle').setAttribute('transform', `rotate(${st.hdg ? c.psi : 0} 20 20)`);
   $('needle').style.opacity = st.hdg ? 1 : 0;
@@ -237,7 +264,7 @@ function render() {
   if (o) outages.push(o);
   const okG = H.gps.filter(p => !p.blocked && !p.rejected), refG = H.gps.filter(p => p.blocked);
   const hdgNa = []; let q = null;
-  for (const p of H.kf) { const na = !(p.v > 1.5 && p.sp <= 30); if (na && !q) q = [p.t, p.t]; if (na && q) q[1] = p.t + 500; if (!na && q) { hdgNa.push(q); q = null; } }
+  for (const p of H.kf) { const na = !((p.v > 1.5 || p.cmp) && p.sp <= 30); if (na && !q) q = [p.t, p.t]; if (na && q) q[1] = p.t + 500; if (!na && q) { hdgNa.push(q); q = null; } }
   if (q) hdgNa.push([q[0], t1]);
 
   timeChart($('cvV'), { t0, t1, outages, yMin: 0, series: [
@@ -247,7 +274,8 @@ function render() {
   ] });
   timeChart($('cvH'), { t0, t1, outages, na: hdgNa, yMin: 0, yMax: 360, series: [
     { type: 'dots', color: COL.gps, r: 1.8, pts: okG.filter(p => p.hdg != null).map(p => [p.t, p.hdg]), hollow: refG.filter(p => p.hdg != null).map(p => [p.t, p.hdg]) },
-    { type: 'line', color: COL.kf, wrap: true, pts: H.kf.filter(p => p.v > 1.5 && p.sp <= 30).map(p => [p.t, p.psi]) },
+    { type: 'dots', color: COL.imu, r: 1.6, pts: H.cmp.map(p => [p[0], p[1]]) },
+    { type: 'line', color: COL.kf, wrap: true, pts: H.kf.filter(p => (p.v > 1.5 || p.cmp) && p.sp <= 30).map(p => [p.t, p.psi]) },
   ] });
   timeChart($('cvE'), { t0, t1, outages, yMin: 0, fmt: v => (v >= 1000 ? `${v / 1000}k` : v), series: [
     { type: 'line', color: COL.out, dash: [5, 4], width: 1.6, pts: H.kf.map(p => [p.t, 2 * p.sig]) },
@@ -273,6 +301,15 @@ function render() {
   // 차단 중 실제 오차 요약
   const be = H.err.filter(p => p.blocked && p.t > now - 3000).pop();
   $('errNow').textContent = blocked && be ? `차단 중 실제 오차 ${fmtM(be.d)} · 필터 예상 ±${fmtM(2 * c.sig)}` : '';
+}
+
+function compassState() {
+  if (!mode) return 'off';
+  if (compass.denied) return 'denied';
+  if (!compass.fresh()) return 'none';
+  if (compass.disturbed()) return 'disturbed';
+  if (!compass.aligned()) return 'aligning';
+  return Date.now() - lastCompUsedT < 2000 ? 'used' : 'aligned';
 }
 
 /* ---------- 저장된 IMU 보정 ---------- */

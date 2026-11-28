@@ -90,6 +90,7 @@ code{color:var(--ink)}
     <div class="chips">
       <span class="chip" id="cGps"><i></i><span>GPS 꺼짐</span></span>
       <span class="chip" id="cImu"><i></i><span>IMU 대기</span></span>
+      <span class="chip" id="cCmp"><i></i><span>나침반 꺼짐</span></span>
       <span class="chip" id="cKf"><i></i><span>필터 대기</span></span>
     </div>
   </header>
@@ -133,7 +134,7 @@ code{color:var(--ink)}
       <div class="pl"><div class="pt">속도 <small>km/h</small></div><div class="fig"><canvas id="cvV"></canvas></div>
         <div class="lg"><span><i class="sw" style="background:var(--kf)"></i>추정</span><span><i class="sw" style="background:rgba(76,194,255,.35);height:8px"></i>±2σ</span><span><i class="dt" style="background:var(--gps)"></i>GPS</span></div></div>
       <div class="pl"><div class="pt">방향 <small>° (북=0)</small></div><div class="fig"><canvas id="cvH"></canvas></div>
-        <div class="lg"><span><i class="sw" style="background:var(--kf)"></i>추정</span><span><i class="dt" style="background:var(--gps)"></i>GPS</span><span><i class="sw" style="background:repeating-linear-gradient(135deg,rgba(135,150,168,.5) 0 2px,transparent 2px 4px);height:9px"></i>추정 불가 (정지·저속)</span></div></div>
+        <div class="lg"><span><i class="sw" style="background:var(--kf)"></i>추정</span><span><i class="dt" style="background:var(--gps)"></i>GPS</span><span><i class="dt" style="background:var(--imu)"></i>나침반(정렬 후)</span><span><i class="sw" style="background:repeating-linear-gradient(135deg,rgba(135,150,168,.5) 0 2px,transparent 2px 4px);height:9px"></i>추정 불가 (정지·저속)</span></div></div>
       <div class="pl"><div class="pt">위치 오차 <small>m</small></div><div class="fig"><canvas id="cvE"></canvas></div>
         <div class="lg"><span><i class="sw" style="background:var(--out)"></i>필터가 예상한 오차 (2σ)</span><span><i class="dt" style="background:var(--err)"></i>실제 GPS와 차이</span></div></div>
       <div class="pl"><div class="pt">IMU 진행방향 가속 <small>m/s²</small></div><div class="fig"><canvas id="cvA"></canvas></div>
@@ -151,6 +152,7 @@ code{color:var(--ink)}
     <p><b>예측</b>: IMU의 진행방향 가속으로 속력을, 자이로 회전으로 방향을 적분하고, 그 속력·방향으로 위치를 이동시켜요.
     <b>보정</b>: GPS 위치(있으면 속력·방향)로 상태를 바로잡아요. GPS가 없으면 예측만 계속되고 불확실도(2σ)가 커져요.</p>
     <p><b>IMU 정렬</b>: 폰이 어떤 자세로 놓여 있어도 되도록, GPS가 잡히는 동안 가속·감속·커브를 겪으며 폰 좌표의 "앞 방향"과 회전 부호를 자동으로 학습해요. 폰 자세가 크게 바뀌면 다시 학습해요.</p>
+    <p><b>나침반</b>: 폰이 향한 방향이라 진행 방향과 달라요. 위성 GPS로 주행하는 동안 둘의 차이(거치 각도 + 자북·진북 차이)를 학습한 뒤, GPS 방향이 없을 때(끊김·정지·대략 위치)만 방향 보정에 써요. 차·기차 안 금속 때문에 틀리기 쉬워 신뢰도를 낮게 두고, 자이로 회전과 어긋나면 잠시 쓰지 않아요.</p>
     <p>폰을 거치대나 테이블에 고정하면 정확해요. 화면이 꺼지면 브라우저가 센서를 멈추므로 화면은 켜 둔 채로 써 주세요.</p>
   </details>
 </div>
