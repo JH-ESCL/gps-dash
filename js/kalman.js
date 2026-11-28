@@ -46,11 +46,18 @@ export class EKF {
   toLL(e, n) { return [this.lat0 + deg(n / R), this.lon0 + deg(e / (R * Math.cos(rad(this.lat0))))]; }
   ll() { return this.toLL(this.x[0], this.x[1]); }
 
-  init(f) {
+  // keep=true: 위치만 GPS로 다시 잡고, 속력·방향·자이로 치우침은 이어받음(불확실도만 키움)
+  init(f, keep = false) {
+    const old = keep && this.x ? { x: this.x.slice(), P: this.P } : null;
     this.lat0 = f.lat; this.lon0 = f.lon; this.t = f.t; this.rej = 0;
     const moving = f.spd != null && f.spd > 1.5 && f.hdg != null;
     this.x = [0, 0, f.spd ?? 0, moving ? rad(f.hdg) : 0, 0]; this.gyroOn = false; this.last = null;
     this.P = M.diag([f.acc ** 2, f.acc ** 2, f.spd != null ? 1 : 25, moving ? rad(10) ** 2 : 10, rad(0.5) ** 2]);
+    if (old) {
+      if (f.spd == null) { this.x[2] = old.x[2]; this.P[2][2] = old.P[2][2] + 9; }
+      if (!moving) { this.x[3] = old.x[3]; this.P[3][3] = old.P[3][3] + rad(20) ** 2; }
+      this.x[4] = old.x[4]; this.P[4][4] = old.P[4][4];
+    }
   }
 
   // 위치 불확실도 (1σ, m)
@@ -77,7 +84,8 @@ export class EKF {
       [0, 0, 0, 0, 1],
     ];
     // 공정잡음: IMU가 정렬되면 작게(IMU를 믿음), 아니면 크게(속도·방향 일정 가정)
-    const qa = u.okA ? 0.3 : 1.0, qw = u.okW ? 0.006 : 0.15;
+    // 대략 위치(Wi‑Fi·기지국, 속력값 없음)만 들어올 때는 속력을 천천히만 바꾸게(위치 잡음에 속력이 춤추지 않게)
+    const qa = u.okA ? 0.3 : this.coarse ? 0.25 : 1.0, qw = u.okW ? 0.006 : this.coarse ? 0.05 : 0.15;
     // 위치 잡음 1 m²/s: GPS 오차는 시간상관(천천히 흐름)이 있어 백색잡음 가정만으로는 σ가 과소평가됨
     const Q = M.diag([1.0 * h, 1.0 * h, qa * qa * h, qw * qw * h, 1e-7 * h]);
     this.P = M.add(M.mul(M.mul(F, this.P), M.T(F)), Q);
@@ -109,13 +117,14 @@ export class EKF {
   // GPS 보정. still=정지 판정이면 속력 0을 측정으로 넣고(ZUPT) 위치는 덜 믿어 GPS 흐름을 덜 따라감
   // 반환: { d: 예측 위치와 GPS 차이(m), ok: 반영 여부 }
   update(f, u, still = false) {
+    this.coarse = f.spd == null && f.acc > 50;
     if (!this.x || this.sigma() > 20000) { this.init(f); return { d: null, ok: true, init: true }; }
     this.predict(f.t, u);
     const [e, n] = this.toEN(f.lat, f.lon);
     const d = Math.hypot(e - this.x[0], n - this.x[1]);
     const gate = 4 * Math.sqrt(this.sigma() ** 2 + f.acc ** 2) + 30;   // 튀는 값 거르기
     if (d > gate && this.rej < 3) { this.rej++; return { d, ok: false }; }
-    if (d > gate) { this.init(f); return { d, ok: true, init: true }; }
+    if (d > gate) { this.init(f, true); return { d, ok: true, init: true }; }
     this.rej = 0;
     const rp = still ? (2 * f.acc) ** 2 : f.acc ** 2;
     const z = [e, n], H = [[1, 0, 0, 0, 0], [0, 1, 0, 0, 0]], Rd = [rp, rp];

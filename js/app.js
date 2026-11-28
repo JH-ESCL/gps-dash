@@ -33,6 +33,9 @@ function onGps(f) {
     if (kf.x) { kf.predict(f.t, imu.input()); const [la, lo] = kf.ll(); push(H.err, { t: f.t, d: hav(la, lo, f.lat, f.lon), blocked: true }); }
     push(H.gps, rec); prevG = null; imu.clearBin(); return;
   }
+  // 대략 위치(Wi‑Fi·기지국)가 직전과 같은 좌표로 되풀이되면 새 정보가 아닐 수 있어 덜 믿음(R 9배)
+  const prevRaw = H.gps.length ? H.gps[H.gps.length - 1] : null;
+  if (prevRaw && f.acc > 20 && prevRaw.lat === f.lat && prevRaw.lon === f.lon) { f = { ...f, acc: f.acc * 3 }; rec.dup = true; }
   // 정지 판정: GPS 속력≈0 이고 IMU도 조용함(IMU 없으면 GPS만으로)
   const still = f.spd != null && f.spd < 0.3 && (!imu.fresh() || imu.still());
   rec.still = still;
@@ -131,7 +134,7 @@ function saveCsv() {
   const rows = ['type,t_ms,lat,lon,speed_mps,heading_deg,acc_or_sigma_m,flag,imu_a_est_mps2,imu_yaw_est_dps,imu_h_raw_mps2,imu_yaw_raw_dps,imu_hz,align_a,align_w,yaw_sign,gyro_bias_dps,acc_x,acc_y,acc_z,gyr_x_rads,gyr_y_rads,gyr_z_rads,gyro_prop_sign'];
   const ua = navigator.userAgent.replace(/[,;\n]/g, ' ');
   rows.push(['meta', H.gps[0].t, '', '', '', '', '', `app_version=${VERSION};build=${BUILD};mode=${mode || 'stopped'};ua=${ua}`].join(','));
-  H.gps.forEach(p => rows.push(['gps', p.t, p.lat, p.lon, p.spd ?? '', p.hdg ?? '', p.acc, p.blocked ? 'blocked' : p.rejected ? 'rejected' : p.still ? 'still' : ''].join(',')));
+  H.gps.forEach(p => rows.push(['gps', p.t, p.lat, p.lon, p.spd ?? '', p.hdg ?? '', p.acc, p.blocked ? 'blocked' : p.rejected ? 'rejected' : p.still ? 'still' : p.dup ? 'dup' : ''].join(',')));
   H.kf.forEach(p => rows.push(['kf', p.t, p.lat.toFixed(7), p.lon.toFixed(7), p.v.toFixed(3), p.v > 1.5 && p.sp <= 30 ? p.psi.toFixed(2) : '', p.sig.toFixed(2), [p.out ? 'imu_only' : '', p.v > 1.5 && p.sp <= 30 ? '' : 'heading_na'].filter(Boolean).join('|')].join(',')));
   H.imu.forEach(p => rows.push(['imu', p.t, '', '', '', '', '', '', p.a == null ? '' : p.a.toFixed(3), p.w == null ? '' : p.w.toFixed(3),
     p.h.toFixed(3), p.r.toFixed(3), p.hz, p.nA, p.nW, p.s, p.bg.toFixed(4), ...(p.raw ? p.raw.map(v => v.toFixed(4)) : ['', '', '', '', '', '']), p.gs].join(',')));
@@ -181,7 +184,11 @@ function render() {
   else if (blocked) chip('cGps', 'warn', 'GPS 차단(테스트)');
   else if (!lastRawT) chip('cGps', 'warn', 'GPS 찾는 중');
   else if (c && c.out) chip('cGps', 'bad', `GPS 끊김 ${fmtT(gapS)}`);
-  else { const last = H.gps[H.gps.length - 1], iv = gpsIv.reduce((a, b) => a + b, 0) / (gpsIv.length || 1); chip('cGps', 'ok', `GPS ±${Math.round(last.acc)} m · ${iv ? (1 / iv).toFixed(1) : '–'} Hz`); }
+  else {
+    const last = H.gps[H.gps.length - 1], iv = gpsIv.reduce((a, b) => a + b, 0) / (gpsIv.length || 1);
+    if (last.spd == null && last.acc > 50) chip('cGps', 'warn', `대략 위치만 ±${fmtM(last.acc)} (위성 GPS 없음)`);
+    else chip('cGps', 'ok', `GPS ±${Math.round(last.acc)} m · ${iv ? (1 / iv).toFixed(1) : '–'} Hz`);
+  }
   if (imu.denied) chip('cImu', 'bad', 'IMU 권한 없음');
   else if (!imu.fresh()) chip('cImu', '', 'IMU 대기');
   else chip('cImu', imu.ready() ? 'ok' : 'warn', imu.ready() ? `IMU ${imu.hz} Hz · 정렬 완료` : `IMU ${imu.hz} Hz · 정렬 ${imu.progress()}/${imu.total}`);
