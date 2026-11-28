@@ -57,7 +57,8 @@ export class Sim {
     const toDev = v => C.map(r => dot(r, v));
     const lin = [T.v * w + gauss(0.3), a + gauss(0.3), gauss(0.3)];
     const gyro = toDev([gauss(0.01), gauss(0.01), -w + this.gyroBias + gauss(0.005)]).map((v, i) => v + wHand[i]);
-    this.onImu(toDev([lin[0], lin[1], lin[2] + 9.81]), toDev(lin), gyro, dt);
+    // 브라우저 원시 형식(표준)으로: [alpha=z, beta=x, gamma=y]
+    this.onImu(toDev([lin[0], lin[1], lin[2] + 9.81]), toDev(lin), [gyro[2], gyro[0], gyro[1]], dt);
 
     // GPS 1 Hz
     if (now >= this.nextFix && this.coarse) {          // 위성 GPS 없음: Wi‑Fi·기지국 대략 위치 8초마다

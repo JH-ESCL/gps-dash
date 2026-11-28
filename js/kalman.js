@@ -133,7 +133,11 @@ export class EKF {
     let ai = null; const names = ['E', 'N'];
     if (still) { z.push(0); H.push([0, 0, 1, 0, 0]); Rd.push(0.05 ** 2); names.push('v'); }
     else if (f.spd != null) { z.push(f.spd); H.push([0, 0, 1, 0, 0]); Rd.push(0.5 ** 2); names.push('v'); }
-    if (f.hdg != null && (f.spd ?? this.x[2]) > 1.5) { z.push(rad(f.hdg)); H.push([0, 0, 0, 1, 0]); Rd.push(rad(5) ** 2); ai = z.length - 1; names.push('ψ'); }
+    if (f.hdg != null && (f.spd ?? this.x[2]) > 1.5) {
+      // GPS 방향 신뢰도: 정확도가 나쁘고 느릴수록 방향 잡음이 큼 (기차 안 ±30 m 이면 ±20° 이상)
+      const sp = Math.max(f.spd ?? this.x[2], 1.5), sh = Math.min(rad(40), rad(4) + Math.atan(f.acc / (sp * 5)));
+      z.push(rad(f.hdg)); H.push([0, 0, 0, 1, 0]); Rd.push(sh ** 2); ai = z.length - 1; names.push('ψ');
+    }
     this._update(z, H, Rd, ai, names);
     if (Math.abs(this.x[0]) > 20000 || Math.abs(this.x[1]) > 20000) {   // 기준점 옮기기 (장거리)
       [this.lat0, this.lon0] = this.ll(); this.x[0] = this.x[1] = 0;

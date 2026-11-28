@@ -1,4 +1,4 @@
-const C = 'kf-viz-1.9.0';   // js/version.js 와 맞춤
+const C = 'kf-viz-1.10.0';   // js/version.js 와 맞춤
 const CORE = ['./', './index.html', './js/app.js', './js/kalman.js', './js/imu.js', './js/sim.js', './js/viz.js', './js/version.js', './js/basemap.js'];
 const EXTRA = ['./manifest.webmanifest', './icon.svg', './icon-192.png', './icon-512.png'];
 

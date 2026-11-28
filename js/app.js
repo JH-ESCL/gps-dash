@@ -1,6 +1,6 @@
 // 앱: 센서 → 칼만필터 → 시각화
 import { EKF, rad, deg, wrapPi, hav } from './kalman.js';
-import { Imu, bindDeviceMotion } from './imu.js';
+import { Imu, bindDeviceMotion, GYRO_MAPS } from './imu.js';
 import { Sim } from './sim.js';
 import { timeChart, drawTrack, COL } from './viz.js';
 import { VERSION, BUILD } from './version.js';
@@ -11,13 +11,13 @@ const MAX_HIST = 20000;
 
 const kf = new EKF(), imu = new Imu();
 let H, ref, prevG, lastFixT, lastRawT, gpsIv, lastKfT, lastImuT;
-let lastCalT = 0, showMap = (() => { try { return localStorage.getItem('map') !== 'off'; } catch (e) { return true; } })();
+let yawWin = null, lastCalT = 0, showMap = (() => { try { return localStorage.getItem('map') !== 'off'; } catch (e) { return true; } })();
 let mode = null;           // null | 'real' | 'sim'
 let watchId = null, sim = null, wake = null, blocked = false, follow = true, winSec = 300;
 
 function resetHist() {
   H = { gps: [], kf: [], err: [], imu: [], gacc: [], gyaw: [], gain: [] };
-  ref = null; prevG = null; lastFixT = 0; lastRawT = 0; gpsIv = []; lastKfT = 0; lastImuT = 0;
+  ref = null; prevG = null; yawWin = null; lastFixT = 0; lastRawT = 0; gpsIv = []; lastKfT = 0; lastImuT = 0;
   kf.x = null; imu.reset(); kf.cal = imu.saved;
 }
 const fro = A => Math.sqrt(A.reduce((s, r) => s + r.reduce((t, v) => t + v * v, 0), 0));
@@ -30,6 +30,7 @@ function onGps(f) {
   if (!ref) ref = { lat: f.lat, lon: f.lon };
   const rec = { t: f.t, lat: f.lat, lon: f.lon, spd: f.spd, hdg: f.hdg, acc: f.acc, blocked };
 
+  if (blocked) { yawWin = null; imu.clearYaw(); }
   if (blocked) {                       // 테스트용 차단: 필터에는 안 넣고 정답 비교에만 사용
     if (kf.x) { kf.predict(f.t, imu.input()); const [la, lo] = kf.ll(); push(H.err, { t: f.t, d: hav(la, lo, f.lat, f.lon), blocked: true }); }
     push(H.gps, rec); prevG = null; imu.clearBin(); return;
@@ -41,7 +42,7 @@ function onGps(f) {
   const still = f.spd != null && f.spd < 0.3 && (!imu.fresh() || imu.still());
   rec.still = still;
   const res = kf.update(f, imu.input(), still);
-  if (!res.ok) { rec.rejected = true; push(H.gps, rec); prevG = null; imu.clearBin(); return; }
+  if (!res.ok) { rec.rejected = true; push(H.gps, rec); prevG = null; yawWin = null; imu.clearBin(); imu.clearYaw(); return; }
   push(H.gps, rec);
   if (res.d != null) push(H.err, { t: f.t, d: res.d, blocked: false });
   if (!res.init && kf.last) {
@@ -50,16 +51,24 @@ function onGps(f) {
   }
   lastFixT = f.t;
 
-  // IMU 정렬 학습: GPS 속력·방향 변화와 IMU 신호를 짝지음
+  // IMU 정렬 학습
+  // (1) 진행방향 가속: GPS 1~3초 간격 속력 변화와 IMU 수평가속을 짝지음
   const sp = f.spd ?? kf.x[2];
-  const hd = f.hdg != null && sp > 3 ? f.hdg : kf.x[2] > 3 ? deg(kf.x[3]) : null;
+  const hd = f.hdg != null && sp > 3 ? f.hdg : kf.x[2] > 3 && kf.P[3][3] < rad(10) ** 2 ? deg(kf.x[3]) : null;
   if (prevG && f.t - prevG.t >= 500 && f.t - prevG.t <= 3000 && f.acc <= 30) {
     const dt = (f.t - prevG.t) / 1000, aG = (sp - prevG.sp) / dt;
-    const wG = hd != null && prevG.hd != null ? wrapPi(rad(hd - prevG.hd)) / dt : null;
-    imu.learn(aG, wG);
-    push(H.gacc, [f.t, aG]); if (wG != null) push(H.gyaw, [f.t, deg(wG)]);
+    imu.learn(aG); push(H.gacc, [f.t, aG]);
   } else imu.clearBin();
   prevG = { t: f.t, sp, hd };
+  // (2) 회전: 5초 이상 구간의 GPS 방향 변화와 자이로 평균을 짝지음 (GPS 방향 잡음을 줄이려고 묶음)
+  if (hd == null || f.acc > 40) { yawWin = null; imu.clearYaw(); }
+  else if (!yawWin || f.t - yawWin.t > 12000) { yawWin = { t: f.t, hd }; imu.clearYaw(); }
+  else if (f.t - yawWin.t >= (f.acc <= 10 ? 2000 : 5000)) {   // GPS가 정확하면 2초, 부정확하면 5초로 묶음
+   
+    const dt = (f.t - yawWin.t) / 1000, wG = wrapPi(rad(hd - yawWin.hd)) / dt;
+    imu.learnYaw(wG); push(H.gyaw, [f.t, deg(wG)]);
+    yawWin = { t: f.t, hd };
+  }
 }
 
 /* ---------- 주기 처리: 예측 + 기록 ---------- */
@@ -77,13 +86,13 @@ setInterval(() => {
     push(H.kf, { t: now, lat: la, lon: lo, v: kf.x[2], psi: deg(kf.x[3]), sv: Math.sqrt(kf.P[2][2]), sp: deg(Math.sqrt(kf.P[3][3])), sig: kf.sigma(), pn: fro(kf.P), out });
   }
   // 위성 GPS로 회전 보정이 확정되면 30초마다 저장 (치우침은 필터 추정값)
-  if (!out && imu.learnedSign() && imu.nW >= 6 && now - lastCalT > 30000 && Math.sqrt(kf.P[4][4]) < 0.003) {
+  if (!out && imu.learnedSign() && imu.gyroReady() && now - lastCalT > 30000 && Math.sqrt(kf.P[4][4]) < 0.003) {
     lastCalT = now; if (imu.saveCal(kf.x[4])) kf.cal = imu.saved;
   }
   if (now - lastImuT >= 200 && imu.fresh()) {
     lastImuT = now;
     push(H.imu, { t: now, a: u.okA ? u.a : null, w: u.okW ? deg(u.s * u.r - kf.x[4]) : null,
-      h: Math.hypot(...imu.hLP), r: deg(imu.rLP), hz: imu.hz, nA: imu.nA, nW: imu.nW, s: imu.sign(), bg: deg(kf.x[4]), raw: imu.takeRaw(), gs: imu.ge ? (imu.ge[0] <= imu.ge[1] ? 1 : -1) : 0 });
+      h: Math.hypot(...imu.hLP), r: deg(imu.rLP), hz: imu.hz, nA: imu.nA, nW: imu.nW, s: imu.sign(), bg: deg(kf.x[4]), raw: imu.takeRaw(), map: imu.map });
   }
 }, 100);
 
@@ -139,13 +148,13 @@ function msg(t) { $('msg').textContent = t; }
 
 function saveCsv() {
   if (!H.gps.length) return msg('저장할 기록이 없어요.');
-  const rows = ['type,t_ms,lat,lon,speed_mps,heading_deg,acc_or_sigma_m,flag,imu_a_est_mps2,imu_yaw_est_dps,imu_h_raw_mps2,imu_yaw_raw_dps,imu_hz,align_a,align_w,yaw_sign,gyro_bias_dps,acc_x,acc_y,acc_z,gyr_x_rads,gyr_y_rads,gyr_z_rads,gyro_prop_sign'];
+  const rows = ['type,t_ms,lat,lon,speed_mps,heading_deg,acc_or_sigma_m,flag,imu_a_est_mps2,imu_yaw_est_dps,imu_h_raw_mps2,imu_yaw_raw_dps,imu_hz,align_a,align_w,yaw_sign,gyro_bias_dps,acc_x,acc_y,acc_z,gyr_alpha_rads,gyr_beta_rads,gyr_gamma_rads,gyro_map'];
   const ua = navigator.userAgent.replace(/[,;\n]/g, ' ');
-  rows.push(['meta', H.gps[0].t, '', '', '', '', '', `app_version=${VERSION};build=${BUILD};mode=${mode || 'stopped'};saved_cal=${imu.saved ? `s${imu.saved.s}_bg${imu.saved.bg.toFixed(5)}` : 'none'};ua=${ua}`].join(','));
+  rows.push(['meta', H.gps[0].t, '', '', '', '', '', `app_version=${VERSION};build=${BUILD};mode=${mode || 'stopped'};saved_cal=${imu.saved ? `s${imu.saved.s}_bg${imu.saved.bg.toFixed(5)}_map${imu.saved.map}` : 'none'};gyro_map=${imu.map};ua=${ua}`].join(','));
   H.gps.forEach(p => rows.push(['gps', p.t, p.lat, p.lon, p.spd ?? '', p.hdg ?? '', p.acc, p.blocked ? 'blocked' : p.rejected ? 'rejected' : p.still ? 'still' : p.dup ? 'dup' : ''].join(',')));
   H.kf.forEach(p => rows.push(['kf', p.t, p.lat.toFixed(7), p.lon.toFixed(7), p.v.toFixed(3), p.v > 1.5 && p.sp <= 30 ? p.psi.toFixed(2) : '', p.sig.toFixed(2), [p.out ? 'imu_only' : '', p.v > 1.5 && p.sp <= 30 ? '' : 'heading_na'].filter(Boolean).join('|')].join(',')));
   H.imu.forEach(p => rows.push(['imu', p.t, '', '', '', '', '', '', p.a == null ? '' : p.a.toFixed(3), p.w == null ? '' : p.w.toFixed(3),
-    p.h.toFixed(3), p.r.toFixed(3), p.hz, p.nA, p.nW, p.s, p.bg.toFixed(4), ...(p.raw ? p.raw.map(v => v.toFixed(4)) : ['', '', '', '', '', '']), p.gs].join(',')));
+    p.h.toFixed(3), p.r.toFixed(3), p.hz, p.nA, p.nW, p.s, p.bg.toFixed(4), ...(p.raw ? p.raw.map(v => v.toFixed(4)) : ['', '', '', '', '', '']), p.map].join(',')));
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([rows.join('\n')], { type: 'text/csv' }));
   a.download = `kf-log-v${VERSION}-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}.csv`;
@@ -269,10 +278,10 @@ function render() {
 /* ---------- 저장된 IMU 보정 ---------- */
 let calKey = '';
 function renderCal() {
-  const c = imu.saved, key = (c ? `${c.s}|${c.bg}|${c.at}` : 'none') + imu.store;
+  const c = imu.saved, key = (c ? `${c.s}|${c.bg}|${c.at}` : 'none') + imu.store + imu.map;
   if (key === calKey) return; calKey = key;
   $('calTxt').innerHTML = c
-    ? `<b>저장된 회전 보정${imu.store.endsWith('.sim') ? ' (시뮬레이션용)' : ''}</b> · 부호 ${c.s > 0 ? '+' : '−'} · 자이로 치우침 ${(c.bg * 180 / Math.PI).toFixed(3)}°/s · ${new Date(c.at).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} 저장<br><span>위성 GPS 없이도 처음부터 자이로로 커브를 따라가요.</span>`
+    ? `<b>저장된 회전 보정${imu.store.endsWith('.sim') ? ' (시뮬레이션용)' : ''}</b> · 부호 ${c.s > 0 ? '+' : '−'} · 자이로 치우침 ${(c.bg * 180 / Math.PI).toFixed(3)}°/s · 축 ${GYRO_MAPS[c.map ?? 0].name} · ${new Date(c.at).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} 저장<br><span>위성 GPS 없이도 처음부터 자이로로 커브를 따라가요.</span>`
     : `<b>저장된 회전 보정 없음${imu.store.endsWith('.sim') ? ' (시뮬레이션용)' : ''}</b><br><span>위성 GPS가 잡힌 상태에서 커브를 몇 번 지나면 자동 저장돼요.</span>`;
   $('calClr').hidden = !c;
 }
